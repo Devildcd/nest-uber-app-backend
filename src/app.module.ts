@@ -4,19 +4,21 @@ import { AppService } from './app.service';
 
 import { MailModule } from './infrastructure/notifications/mail/mail.module';
 import { SmsModule } from './infrastructure/notifications/sms/sms.module';
-import { UsersModule } from './modules/users/users.module';
 import { AuthModule } from './modules/auth/auth.module';
-import { TripsModule } from './modules/trips/trips.module';
 import { ConfigModule } from './config/config.module';
+import { SwaggerModule } from './docs/swagger/swagger.module';
+import { UserModule } from './modules/user/user.module';
+import { TripModule } from './modules/trip/trip.module';
 
 @Module({
   imports: [
     MailModule,
     SmsModule,
-    UsersModule,
     AuthModule,
-    TripsModule,
     ConfigModule,
+    SwaggerModule,
+    UserModule,
+    TripModule,
   ],
   controllers: [AppController],
   providers: [AppService],

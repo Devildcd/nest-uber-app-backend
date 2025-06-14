@@ -2,6 +2,8 @@ import { ConfigModule as NestConfigModule } from '@nestjs/config';
 import { Module } from '@nestjs/common';
 import configurations from './index';
 import { validationSchema } from './validation.schema';
+import { SwaggerModule } from 'src/docs/swagger/swagger.module';
+import { swaggerOptions } from 'src/docs/swagger/swagger.bootstrap';
 
 @Module({
   imports: [
@@ -11,6 +13,7 @@ import { validationSchema } from './validation.schema';
       validationSchema: validationSchema,
       envFilePath: ['.env'],
     }),
+    SwaggerModule.forRoot(swaggerOptions),
   ],
   exports: [NestConfigModule],
 })
