@@ -4,6 +4,7 @@ import configurations from './index';
 import { validationSchema } from './validation.schema';
 import { SwaggerModule } from 'src/docs/swagger/swagger.module';
 import { swaggerOptions } from 'src/docs/swagger/swagger.bootstrap';
+import { DatabaseModule } from 'src/database/database.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { swaggerOptions } from 'src/docs/swagger/swagger.bootstrap';
       envFilePath: ['.env'],
     }),
     SwaggerModule.forRoot(swaggerOptions),
+    DatabaseModule.forRoot(),
   ],
   exports: [NestConfigModule],
 })

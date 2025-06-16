@@ -9,6 +9,8 @@ import { ConfigModule } from './config/config.module';
 import { SwaggerModule } from './docs/swagger/swagger.module';
 import { UserModule } from './modules/user/user.module';
 import { TripModule } from './modules/trip/trip.module';
+import { DatabaseConfigService } from './database/database-config/database-config.service';
+import { DatabaseModule } from './database/database.module';
 
 @Module({
   imports: [
@@ -19,8 +21,9 @@ import { TripModule } from './modules/trip/trip.module';
     SwaggerModule,
     UserModule,
     TripModule,
+    DatabaseModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, DatabaseConfigService],
 })
 export class AppModule {}
