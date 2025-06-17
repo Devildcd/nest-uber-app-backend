@@ -11,6 +11,7 @@ import { UserModule } from './modules/user/user.module';
 import { TripModule } from './modules/trip/trip.module';
 import { DatabaseConfigService } from './database/database-config/database-config.service';
 import { DatabaseModule } from './database/database.module';
+import { VehiclesModule } from './modules/vehicles/vehicles.module';
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { DatabaseModule } from './database/database.module';
     UserModule,
     TripModule,
     DatabaseModule,
+    VehiclesModule,
   ],
   controllers: [AppController],
   providers: [AppService, DatabaseConfigService],
