@@ -1,8 +1,10 @@
+import { Vehicle } from 'src/modules/vehicles/entities/vehicle.entity';
 import {
   Column,
   CreateDateColumn,
   Entity,
   Index,
+  OneToMany,
   //   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
@@ -53,8 +55,9 @@ export class User {
   @Column({ type: 'json', nullable: true })
   currentLocation?: { latitude: number; longitude: number };
 
-  // @ManyToOne(() => Vehicle, (vehicle) => vehicle.id, { nullable: true })
-  // vehicle?: any;
+  @OneToMany(() => Vehicle, (vehicle) => vehicle.driver)
+  vehicles: Vehicle[];
+
 
   @Column({ type: 'enum', enum: UserStatus, default: UserStatus.ACTIVE })
   status: UserStatus;
