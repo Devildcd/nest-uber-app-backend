@@ -9,7 +9,6 @@ import {
   Length,
   IsBoolean,
 } from 'class-validator';
-import { Type } from 'class-transformer';
 import { VehicleType, VehicleStatus } from '../entities/vehicle.entity';
 
 export class CreateVehicleDto {
@@ -25,7 +24,7 @@ export class CreateVehicleDto {
   model: string;
 
   @IsInt()
-  @Min(1886) 
+  @Min(1886)
   year: number;
 
   @IsString()

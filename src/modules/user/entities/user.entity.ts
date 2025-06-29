@@ -1,10 +1,13 @@
+import { AuthCredentials } from 'src/modules/auth/entities/auth-credentials.entity';
 import { Vehicle } from 'src/modules/vehicles/entities/vehicle.entity';
 import {
   Column,
   CreateDateColumn,
+  DeleteDateColumn,
   Entity,
   Index,
   OneToMany,
+  OneToOne,
   //   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
@@ -30,6 +33,9 @@ export enum UserStatus {
 export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  @OneToOne(() => AuthCredentials, (authCredentials) => authCredentials.user)
+  authCredentials: AuthCredentials;
 
   @Column({ length: 100 })
   name: string;
@@ -58,7 +64,6 @@ export class User {
   @OneToMany(() => Vehicle, (vehicle) => vehicle.driver)
   vehicles: Vehicle[];
 
-
   @Column({ type: 'enum', enum: UserStatus, default: UserStatus.ACTIVE })
   status: UserStatus;
 
@@ -73,4 +78,7 @@ export class User {
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
+
+  @DeleteDateColumn({ type: 'timestamptz', nullable: true })
+  deletedAt?: Date;
 }
