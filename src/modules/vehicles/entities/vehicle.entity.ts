@@ -10,19 +10,19 @@ import {
 import { User } from 'src/modules/user/entities/user.entity';
 
 export enum VehicleType {
-  CAR        = 'car',
+  CAR = 'car',
   MOTORCYCLE = 'motorcycle',
-  VAN        = 'van',
-  SUV        = 'suv',
-  OTHER      = 'other',
+  VAN = 'van',
+  SUV = 'suv',
+  OTHER = 'other',
 }
 
 export enum VehicleStatus {
   PENDING_REVIEW = 'pending_review',
   APPROVED = 'approved',
-  REJECTED       = 'rejected',
-  MAINTENANCE    = 'maintenance',
-  UNAVAILABLE    = 'unavailable',
+  REJECTED = 'rejected',
+  MAINTENANCE = 'maintenance',
+  UNAVAILABLE = 'unavailable',
 }
 
 @Entity({ name: 'vehicles' })
@@ -80,7 +80,11 @@ export class Vehicle {
   @Column({ default: true })
   isActive: boolean;
 
-  @Column({ type: 'enum', enum: VehicleStatus, default: VehicleStatus.PENDING_REVIEW })
+  @Column({
+    type: 'enum',
+    enum: VehicleStatus,
+    default: VehicleStatus.PENDING_REVIEW,
+  })
   status: VehicleStatus;
 
   @CreateDateColumn({ type: 'timestamptz' })
