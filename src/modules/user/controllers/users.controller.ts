@@ -35,13 +35,12 @@ import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { UserFiltersDto } from '../dto/user-filters.dto';
 import { UpdateUserDto } from '../dto/update-user.dto';
 import { ApiResponse } from 'src/common/interfaces/api-response.interface';
-import { ChangePasswordDto } from 'src/modules/auth/dto/change-password.dto';
-import { AuthService } from 'src/modules/auth/services/auth.service';
+import { ChangePasswordDto } from 'src/modules/user/dto/change-password.dto';
 import { RegisterUserResponseDto } from '../dto/register-user-response.dto';
 import { plainToInstance } from 'class-transformer';
 import { UsersListResponseDto } from '../dto/users-list-response.dto';
 import { UserResponseWrapperDto } from '../dto/user-response-wrapper.dto';
-import { ChangePasswordResponseDto } from 'src/modules/auth/dto/change-password-response.dto';
+import { ChangePasswordResponseDto } from 'src/modules/user/dto/change-password-response.dto';
 
 @ApiTags('users')
 @Controller('users')
@@ -52,7 +51,7 @@ export class UserController {
 
   constructor(
     private readonly userService: UserService,
-    private readonly authCredService: AuthService,
+    // private readonly authCredService: AuthService,
   ) {}
 
   @Post('register')
@@ -181,8 +180,10 @@ export class UserController {
     @Body() dto: ChangePasswordDto,
   ): Promise<ChangePasswordResponseDto> {
     this.logger.log(`Changing password for user ${id}`);
-    const apiResp: ApiResponse<null> =
-      await this.authCredService.changePassword(id, dto);
+    const apiResp: ApiResponse<null> = await this.userService.changePassword(
+      id,
+      dto,
+    );
     return plainToInstance(ChangePasswordResponseDto, apiResp, {
       excludeExtraneousValues: true,
     });

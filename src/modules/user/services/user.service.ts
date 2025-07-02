@@ -3,12 +3,12 @@ import {
   Logger,
   ConflictException,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 import { User, UserStatus } from '../entities/user.entity';
 import { CreateUserDto } from '../dto/create-user.dto';
 import { RegisterUserDto } from '../dto/register-user.dto';
-import { AuthService } from 'src/modules/auth/services/auth.service';
 import { ApiResponse } from 'src/common/interfaces/api-response.interface';
 import {
   formatErrorResponse,
@@ -19,16 +19,29 @@ import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { UserFiltersDto } from '../dto/user-filters.dto';
 import { UserRepository } from '../repositories/user.repository';
 import { UpdateUserDto } from '../dto/update-user.dto';
+import {
+  AuthCredentials,
+  AuthMethod,
+} from 'src/modules/user/entities/auth-credentials.entity';
+import * as bcrypt from 'bcrypt';
+import { CreateAuthCredentialsDto } from '../dto/create-auth-credentials.dto';
+import { ConfigService } from '@nestjs/config';
+import { ChangePasswordDto } from '../dto/change-password.dto';
+import { AuthCredentialsRepository } from '../repositories/auth-credentials.repository';
 
 @Injectable()
 export class UserService {
   private readonly logger = new Logger(UserService.name);
+  private readonly saltRounds: number;
 
   constructor(
+    private readonly config: ConfigService,
     private readonly dataSource: DataSource,
-    private readonly credsService: AuthService,
     private readonly userRepository: UserRepository,
-  ) {}
+    private readonly credsRepo: AuthCredentialsRepository,
+  ) {
+    this.saltRounds = this.config.get<number>('AUTH_SALT_ROUNDS', 12);
+  }
 
   /**
    * Obtiene todos los usuarios con paginación y filtros.
@@ -161,6 +174,68 @@ export class UserService {
   }
 
   /**
+   * Crea credenciales para un usuario según DTO.
+   * Usa el EntityManager de la transacción.
+   */
+  async createForUser(
+    dto: CreateAuthCredentialsDto,
+    manager: EntityManager,
+  ): Promise<ApiResponse<AuthCredentials | null>> {
+    try {
+      const userId = dto.userId!;
+
+      // 1) Validar usuario existente
+      const userExists = await manager.exists(User, { where: { id: userId } });
+      if (!userExists) {
+        throw new Error('User not found');
+      }
+
+      // 2) Evitar duplicados
+      const existing = await manager.findOne(AuthCredentials, {
+        where: { user: { id: userId } },
+      });
+      if (existing) {
+        throw new Error('Credentials already exist for user');
+      }
+
+      // 3) Mapear DTO → entidad parcial
+      const { password, ...rawDto } = dto;
+      const restDto: Partial<AuthCredentials> = {};
+      for (const [key, val] of Object.entries(rawDto)) {
+        if (val != null) {
+          restDto[key] =
+            key.toLowerCase().endsWith('at') && typeof val === 'string'
+              ? new Date(val)
+              : val;
+        }
+      }
+
+      // 4) Hashear contraseña local
+      if (dto.authenticationMethod === AuthMethod.LOCAL && password) {
+        const salt = await bcrypt.genSalt(this.saltRounds);
+        restDto.salt = salt;
+        restDto.passwordHash = await bcrypt.hash(password, salt);
+      }
+
+      // 5) Persistir
+      const credsRepo = manager.getRepository(AuthCredentials);
+      const newCreds = credsRepo.create({
+        user: { id: userId },
+        ...restDto,
+      });
+      const saved = await credsRepo.save(newCreds);
+
+      this.logger.log(
+        `Credentials created for user: ${userId}, credsId: ${saved.id}`,
+      );
+      return formatSuccessResponse('Credentials created successfully', saved);
+    } catch (err) {
+      // Manejo unificado de errores → devuelve ApiResponse<null> con el código adecuado
+      return handleServiceError(this.logger, err, 'createForUser');
+    }
+  }
+
+  /**
    * Registra un usuario + credenciales en una sola transacción.
    */
   async register(dto: RegisterUserDto): Promise<ApiResponse<User>> {
@@ -179,7 +254,7 @@ export class UserService {
 
       // 2) crear credenciales
       const credDto = { ...dto.credentials, userId: user.id };
-      await this.credsService.createForUser(credDto, qr.manager);
+      await this.createForUser(credDto, qr.manager);
 
       // 3) commit y respuesta
       await qr.commitTransaction();
@@ -255,6 +330,44 @@ export class UserService {
   }
 
   /**
+   * Cambia la contraseña de un usuario (inserta un nuevo hash+salt).
+   */
+  async changePassword(
+    userId: string,
+    dto: ChangePasswordDto,
+  ): Promise<ApiResponse<null>> {
+    try {
+      // 1) Generar salt y hash
+      const salt = await bcrypt.genSalt();
+      const hash = await bcrypt.hash(dto.newPassword, salt);
+
+      // 2) Ejecutar update en el repo
+      await this.credsRepo.updatePassword(userId, hash, salt);
+
+      // 3) Responder éxito
+      return formatSuccessResponse('Password updated successfully', null);
+    } catch (err: any) {
+      // Log y error estandarizado
+      if (err instanceof Error) {
+        this.logger.error(
+          `changePassword failed for user ${userId}`,
+          err.stack || err.message,
+        );
+      } else {
+        this.logger.error(
+          `changePassword failed for user ${userId}`,
+          String(err),
+        );
+      }
+      return formatErrorResponse<null>(
+        'Failed to update password',
+        'PASSWORD_UPDATE_ERROR',
+        err,
+      );
+    }
+  }
+
+  /**
    * Elimina (soft delete) un usuario.
    */
   async remove(id: string): Promise<ApiResponse<null>> {
@@ -278,5 +391,84 @@ export class UserService {
         typedError,
       );
     }
+  }
+
+  /**
+   * Valida email|phone + password, carga user + authCredentials y
+   * compara contra bcrypt. Retorna el User sin la contraseña si ok,
+   * o null si credenciales inválidas.
+   */
+  async validateUserCredentials(
+    dto: { email?: string; phoneNumber?: string; password: string },
+    manager: EntityManager,
+  ): Promise<User | null> {
+    const repo = manager.getRepository(User);
+
+    // 1) Carga el usuario con sus AuthCredentials
+    const user = await repo.findOne({
+      where: dto.email
+        ? { email: dto.email.toLowerCase() }
+        : { phoneNumber: dto.phoneNumber! },
+      relations: ['authCredentials'],
+    });
+
+    if (
+      !user ||
+      !user.authCredentials ||
+      user.authCredentials.authenticationMethod !== AuthMethod.LOCAL ||
+      !user.authCredentials.passwordHash ||
+      !user.authCredentials.salt
+    ) {
+      // no existe o no es login local
+      return null;
+    }
+
+    // 2) Comprueba lockout por intentos fallidos
+    const now = new Date();
+    if (
+      user.authCredentials.lockoutUntil &&
+      user.authCredentials.lockoutUntil > now
+    ) {
+      this.logger.warn(
+        `User ${user.id} está bloqueado hasta ${user.authCredentials.lockoutUntil?.toISOString()}`,
+      );
+      throw new UnauthorizedException('Account is temporarily locked');
+    }
+
+    // 3) Hashea la contraseña recibida con la sal guardada
+    const hash = await bcrypt.hash(dto.password, user.authCredentials.salt);
+    const isMatch = hash === user.authCredentials.passwordHash;
+
+    if (!isMatch) {
+      // 4) Incrementa intentos fallidos y setea lockout si excede
+      const credsRepo = manager.getRepository(AuthCredentials);
+      user.authCredentials.failedLoginAttempts++;
+      if (user.authCredentials.failedLoginAttempts >= 5) {
+        // bloquea 15 minutos, por ejemplo
+        user.authCredentials.lockoutUntil = new Date(Date.now() + 15 * 60_000);
+        this.logger.warn(`User ${user.id} bloqueado por varios fallos`);
+      }
+      await credsRepo.save(user.authCredentials);
+      return null;
+    }
+
+    // 5) Si es match, resetea intentos fallidos
+    if (user.authCredentials.failedLoginAttempts > 0) {
+      user.authCredentials.failedLoginAttempts = 0;
+      user.authCredentials.lockoutUntil = undefined;
+      await manager.getRepository(AuthCredentials).save(user.authCredentials);
+    }
+
+    // 6) Verifica que el usuario esté activo
+    if (user.status !== UserStatus.ACTIVE) {
+      throw new UnauthorizedException('User is not active');
+    }
+
+    // 7) Todo OK → retornamos el user (sin exponer passwordHash)
+    delete user.authCredentials.passwordHash;
+    if (user.authCredentials) {
+      delete user.authCredentials.salt;
+    }
+    return user;
   }
 }

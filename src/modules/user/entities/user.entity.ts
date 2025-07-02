@@ -1,4 +1,5 @@
-import { AuthCredentials } from 'src/modules/auth/entities/auth-credentials.entity';
+import { AuthCredentials } from 'src/modules/user/entities/auth-credentials.entity';
+import { Session } from 'src/modules/auth/entities/session.entity';
 import { Vehicle } from 'src/modules/vehicles/entities/vehicle.entity';
 import {
   Column,
@@ -36,6 +37,9 @@ export class User {
 
   @OneToOne(() => AuthCredentials, (authCredentials) => authCredentials.user)
   authCredentials: AuthCredentials;
+
+  @OneToMany(() => Session, (session) => session.user)
+  sessions: Session[];
 
   @Column({ length: 100 })
   name: string;
