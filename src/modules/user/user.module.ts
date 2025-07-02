@@ -5,15 +5,15 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from './entities/user.entity';
 import { Vehicle } from '../vehicles/entities/vehicle.entity';
 import { UserController } from './controllers/users.controller';
-import { AuthModule } from '../auth/auth.module';
-import { AuthCredentials } from '../auth/entities/auth-credentials.entity';
+import { AuthCredentials } from './entities/auth-credentials.entity';
+import { Session } from '../auth/entities/session.entity';
+import { AuthCredentialsRepository } from './repositories/auth-credentials.repository';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, Vehicle, AuthCredentials]),
-    AuthModule,
+    TypeOrmModule.forFeature([User, Vehicle, AuthCredentials, Session]),
   ],
-  providers: [UserService, UserRepository],
+  providers: [UserService, UserRepository, AuthCredentialsRepository],
   exports: [UserService, UserRepository],
   controllers: [UserController],
 })

@@ -1,129 +1,114 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { EntityManager } from 'typeorm';
-import * as bcrypt from 'bcrypt';
-import { AuthCredentials } from '../entities/auth-credentials.entity';
-import { AuthMethod } from '../entities/auth-credentials.entity';
-import { CreateAuthCredentialsDto } from '../dto/create-auth-credentials.dto';
-import { ConfigService } from '@nestjs/config';
-import { User } from '../../user/entities/user.entity';
-import { ChangePasswordDto } from '../dto/change-password.dto';
-import { ApiResponse } from 'src/common/interfaces/api-response.interface';
 import {
-  formatErrorResponse,
-  formatSuccessResponse,
-  handleServiceError,
-} from 'src/common/utils/api-response.utils';
-import { AuthCredentialsRepository } from '../repositories/auth-credentials.repository';
+  BadRequestException,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { DataSource, Repository } from 'typeorm';
+import { LoginDto } from '../dto/login.dto';
+import { UserService } from 'src/modules/user/services/user.service';
+import { TokenService } from './token.service';
+import { Session, SessionType } from '../entities/session.entity';
+import { SessionRepository } from '../repositories/session.repository';
+import { Response as ExpressResponse } from 'express';
 
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
-  private readonly saltRounds: number;
 
   constructor(
-    private readonly config: ConfigService,
-    private readonly credsRepo: AuthCredentialsRepository,
-  ) {
-    this.saltRounds = this.config.get<number>('AUTH_SALT_ROUNDS', 12);
-  }
+    private readonly usersService: UserService,
+    private readonly tokenService: TokenService,
+    private readonly dataSource: DataSource,
+    private readonly sessionRepo: SessionRepository,
+  ) {}
 
   /**
-   * Crea credenciales para un usuario según DTO.
-   * Usa el EntityManager de la transacción.
+   * Loguea al usuario (por email o teléfono + password), crea sesión y emite tokens.
+   * - En WEB: el refreshToken va en cookie HttpOnly
+   * - En Mobile/API: ambos tokens se devuelven en el body
    */
-  async createForUser(
-    dto: CreateAuthCredentialsDto,
-    manager: EntityManager,
-  ): Promise<ApiResponse<AuthCredentials | null>> {
+  async login(
+    dto: LoginDto,
+    res?: ExpressResponse,
+  ): Promise<{ accessToken: string; refreshToken?: string }> {
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+
     try {
-      const userId = dto.userId!;
-
-      // 1) Validar usuario existente
-      const userExists = await manager.exists(User, { where: { id: userId } });
-      if (!userExists) {
-        throw new Error('User not found');
-      }
-
-      // 2) Evitar duplicados
-      const existing = await manager.findOne(AuthCredentials, {
-        where: { user: { id: userId } },
-      });
-      if (existing) {
-        throw new Error('Credentials already exist for user');
-      }
-
-      // 3) Mapear DTO → entidad parcial
-      const { password, ...rawDto } = dto;
-      const restDto: Partial<AuthCredentials> = {};
-      for (const [key, val] of Object.entries(rawDto)) {
-        if (val != null) {
-          restDto[key] =
-            key.toLowerCase().endsWith('at') && typeof val === 'string'
-              ? new Date(val)
-              : val;
-        }
-      }
-
-      // 4) Hashear contraseña local
-      if (dto.authenticationMethod === AuthMethod.LOCAL && password) {
-        const salt = await bcrypt.genSalt(this.saltRounds);
-        restDto.salt = salt;
-        restDto.passwordHash = await bcrypt.hash(password, salt);
-      }
-
-      // 5) Persistir
-      const credsRepo = manager.getRepository(AuthCredentials);
-      const newCreds = credsRepo.create({
-        user: { id: userId },
-        ...restDto,
-      });
-      const saved = await credsRepo.save(newCreds);
-
-      this.logger.log(
-        `Credentials created for user: ${userId}, credsId: ${saved.id}`,
+      // 1) Validar credenciales
+      const user = await this.usersService.validateUserCredentials(
+        {
+          email: dto.email,
+          phoneNumber: dto.phoneNumber,
+          password: dto.password,
+        },
+        qr.manager,
       );
-      return formatSuccessResponse('Credentials created successfully', saved);
+      if (!user) {
+        throw new UnauthorizedException('Email o contraseña inválidos');
+      }
+
+      // 2) Generar tokens
+      const { token: accessToken, expiresIn: accessTtl } =
+        this.tokenService.createAccessToken({
+          sub: user.id,
+          email: user.email,
+        });
+      const {
+        token: refreshToken,
+        jti,
+        expiresIn: refreshTtl,
+      } = this.tokenService.createRefreshToken({
+        sub: user.id,
+        email: user.email,
+      });
+
+      // 3) Obtener repositorio “bare” de Session dentro de la transacción
+      const sessionRepo: Repository<Session> =
+        qr.manager.getRepository(Session);
+
+      const newSession = sessionRepo.create({
+        user,
+        sessionType: dto.sessionType ?? SessionType.WEB,
+        accessToken,
+        refreshToken,
+        jti,
+        accessTokenExpiresAt: new Date(Date.now() + accessTtl),
+        refreshTokenExpiresAt: new Date(Date.now() + refreshTtl),
+        deviceInfo: dto.deviceInfo,
+        ipAddress: dto.ipAddress,
+        userAgent: dto.userAgent,
+        location: dto.location,
+      });
+
+      // 4) Guardar sesión y hacer commit
+      await sessionRepo.save(newSession);
+      await qr.commitTransaction();
+
+      // 5) Devolver tokens (y cookie en WEB)
+      if (dto.sessionType === SessionType.WEB && res) {
+        res.cookie('refreshToken', refreshToken, {
+          httpOnly: true,
+          secure: process.env.NODE_ENV === 'production',
+          sameSite: 'strict',
+          maxAge: refreshTtl,
+          domain: process.env.COOKIE_DOMAIN,
+          path: process.env.COOKIE_PATH,
+        });
+        return { accessToken };
+      }
+      return { accessToken, refreshToken };
     } catch (err) {
-      // Manejo unificado de errores → devuelve ApiResponse<null> con el código adecuado
-      return handleServiceError(this.logger, err, 'createForUser');
-    }
-  }
-
-  /**
-   * Cambia la contraseña de un usuario (inserta un nuevo hash+salt).
-   */
-  async changePassword(
-    userId: string,
-    dto: ChangePasswordDto,
-  ): Promise<ApiResponse<null>> {
-    try {
-      // 1) Generar salt y hash
-      const salt = await bcrypt.genSalt();
-      const hash = await bcrypt.hash(dto.newPassword, salt);
-
-      // 2) Ejecutar update en el repo
-      await this.credsRepo.updatePassword(userId, hash, salt);
-
-      // 3) Responder éxito
-      return formatSuccessResponse('Password updated successfully', null);
-    } catch (err: any) {
-      // Log y error estandarizado
-      if (err instanceof Error) {
-        this.logger.error(
-          `changePassword failed for user ${userId}`,
-          err.stack || err.message,
-        );
-      } else {
-        this.logger.error(
-          `changePassword failed for user ${userId}`,
-          String(err),
-        );
+      await qr.rollbackTransaction();
+      if (err instanceof UnauthorizedException) {
+        throw err;
       }
-      return formatErrorResponse<null>(
-        'Failed to update password',
-        'PASSWORD_UPDATE_ERROR',
-        err,
-      );
+      this.logger.error('Login error', err);
+      throw new BadRequestException('Unexpected error during login');
+    } finally {
+      await qr.release();
     }
   }
 }
