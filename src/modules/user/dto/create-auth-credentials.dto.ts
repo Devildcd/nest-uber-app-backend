@@ -1,4 +1,8 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  ApiHideProperty,
+  ApiProperty,
+  ApiPropertyOptional,
+} from '@nestjs/swagger';
 import {
   IsUUID,
   IsEnum,
@@ -74,10 +78,7 @@ export class CreateAuthCredentialsDto {
   @IsEnum(AuthMethod)
   authenticationMethod: AuthMethod;
 
-  @ApiPropertyOptional({
-    type: OAuthProvidersDto,
-    description: 'Identifiers for OAuth providers',
-  })
+  @ApiHideProperty()
   @ValidateIf((o: CreateAuthCredentialsDto) =>
     [AuthMethod.GOOGLE, AuthMethod.FACEBOOK, AuthMethod.APPLE].includes(
       o.authenticationMethod,
@@ -87,110 +88,67 @@ export class CreateAuthCredentialsDto {
   @Type(() => OAuthProvidersDto)
   oauthProviders?: OAuthProvidersDto;
 
-  @ApiPropertyOptional({
-    description: `Password reset token (min ${TOKEN_MIN_LENGTH} chars)`,
-    minLength: TOKEN_MIN_LENGTH,
-    maxLength: TOKEN_MAX_LENGTH,
-    example: 'reset-token-123',
-  })
+  @ApiHideProperty()
   @IsOptional()
   @IsString()
   @Length(TOKEN_MIN_LENGTH, TOKEN_MAX_LENGTH)
   passwordResetToken?: string;
 
-  @ApiPropertyOptional({
-    description: 'Expiration for password reset token (ISO8601)',
-    example: '2025-07-01T00:00:00Z',
-  })
+  @ApiHideProperty()
   @IsOptional()
   @IsDateString()
   passwordResetTokenExpiresAt?: string;
 
-  @ApiPropertyOptional({
-    description: 'Enable multi-factor authentication',
-    example: false,
-  })
+  @ApiHideProperty()
   @IsOptional()
   @IsBoolean()
   mfaEnabled?: boolean;
 
-  @ApiPropertyOptional({
-    description: 'Secret used for MFA (TOTP)',
-    example: 'JBSWY3DPEHPK3PXP',
-  })
-  @ValidateIf((o: CreateAuthCredentialsDto) => !!o.mfaEnabled)
-  @IsString()
-  mfaSecret?: string;
-
-  @ApiPropertyOptional({
-    description: 'Date of last password change (ISO8601)',
-    example: '2025-06-01T12:00:00Z',
-  })
+  @ApiHideProperty()
   @IsOptional()
   @IsDateString()
   lastPasswordChangeAt?: string;
 
-  @ApiPropertyOptional({
-    description: 'Count of consecutive failed login attempts',
-    example: 0,
-    minimum: 0,
-  })
+  @ApiHideProperty()
   @IsOptional()
   @IsInt()
   @Min(0)
   failedLoginAttempts?: number;
 
-  @ApiPropertyOptional({
-    description: 'Account lockout until date (ISO8601)',
-    example: '2025-06-22T00:00:00Z',
-  })
+  @ApiHideProperty()
   @IsOptional()
   @IsDateString()
   lockoutUntil?: string;
 
-  @ApiPropertyOptional({
-    description: 'Last login timestamp (ISO8601)',
-    example: '2025-06-20T10:00:00Z',
-  })
+  @ApiHideProperty()
   @IsOptional()
   @IsDateString()
   lastLoginAt?: string;
 
-  @ApiPropertyOptional({
-    description: `Email verification token (min ${TOKEN_MIN_LENGTH} chars)`,
-    minLength: TOKEN_MIN_LENGTH,
-    maxLength: TOKEN_MAX_LENGTH,
-    example: 'email-verif-token-123',
-  })
-  @IsOptional()
-  @IsString()
-  @Length(TOKEN_MIN_LENGTH, TOKEN_MAX_LENGTH)
-  emailVerificationToken?: string;
+  // @ApiHideProperty()
+  // @ValidateIf((o: CreateAuthCredentialsDto) => !!o.mfaEnabled)
+  // @IsString()
+  // mfaSecret?: string;
 
-  @ApiPropertyOptional({
-    description: 'Expiration for email verification token (ISO8601)',
-    example: '2025-06-25T00:00:00Z',
-  })
-  @IsOptional()
-  @IsDateString()
-  emailVerificationTokenExpiresAt?: string;
+  // @ApiHideProperty()
+  // @IsOptional()
+  // @IsString()
+  // @Length(TOKEN_MIN_LENGTH, TOKEN_MAX_LENGTH)
+  // emailVerificationToken?: string;
 
-  @ApiPropertyOptional({
-    description: `Phone verification token (min ${TOKEN_MIN_LENGTH} chars)`,
-    minLength: TOKEN_MIN_LENGTH,
-    maxLength: TOKEN_MAX_LENGTH,
-    example: 'phone-verif-token-123',
-  })
-  @IsOptional()
-  @IsString()
-  @Length(TOKEN_MIN_LENGTH, TOKEN_MAX_LENGTH)
-  phoneVerificationToken?: string;
+  // @ApiHideProperty()
+  // @IsOptional()
+  // @IsDateString()
+  // emailVerificationTokenExpiresAt?: string;
 
-  @ApiPropertyOptional({
-    description: 'Expiration for phone verification token (ISO8601)',
-    example: '2025-06-25T00:00:00Z',
-  })
-  @IsOptional()
-  @IsDateString()
-  phoneVerificationTokenExpiresAt?: string;
+  // @ApiHideProperty()
+  // @IsOptional()
+  // @IsString()
+  // @Length(TOKEN_MIN_LENGTH, TOKEN_MAX_LENGTH)
+  // phoneVerificationToken?: string;
+
+  // @ApiHideProperty()
+  // @IsOptional()
+  // @IsDateString()
+  // phoneVerificationTokenExpiresAt?: string;
 }

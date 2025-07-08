@@ -19,6 +19,7 @@ import { LoginDto } from '../dto/login.dto';
 import { LoginResponseDto } from '../dto/login-response.dto';
 import { plainToInstance } from 'class-transformer';
 import { Response as ExpressResponse } from 'express';
+import { Public } from '../decorators/public.decorator';
 
 @Controller('auth')
 export class AuthController {
@@ -26,6 +27,7 @@ export class AuthController {
 
   constructor(private readonly authService: AuthService) {}
 
+  @Public()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Authenticate user and create session' })

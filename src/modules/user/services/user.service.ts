@@ -28,6 +28,8 @@ import { CreateAuthCredentialsDto } from '../dto/create-auth-credentials.dto';
 import { ConfigService } from '@nestjs/config';
 import { ChangePasswordDto } from '../dto/change-password.dto';
 import { AuthCredentialsRepository } from '../repositories/auth-credentials.repository';
+import { UserProfileDto } from '../dto/user-profile.dto';
+import { plainToInstance } from 'class-transformer';
 
 @Injectable()
 export class UserService {
@@ -112,6 +114,29 @@ export class UserService {
         typedError.code,
         typedError,
       );
+    }
+  }
+
+  /**
+   * Devuelve los datos públicos del usuario autenticado, envuelto en ApiResponse.
+   */
+  async getProfile(
+    userId: string,
+  ): Promise<ApiResponse<UserProfileDto | null>> {
+    try {
+      const user = await this.userRepository.findById(userId);
+
+      if (!user) {
+        throw new NotFoundException(`User with id ${userId} not found`);
+      }
+
+      const dto = plainToInstance(UserProfileDto, user, {
+        excludeExtraneousValues: true,
+      });
+
+      return formatSuccessResponse('Profile obtained correctly', dto);
+    } catch (err) {
+      return handleServiceError(this.logger, err, 'UserService.getProfile');
     }
   }
 
