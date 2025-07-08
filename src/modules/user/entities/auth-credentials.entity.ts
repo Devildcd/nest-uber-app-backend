@@ -20,12 +20,12 @@ export enum AuthMethod {
 @Entity({ name: 'auth_credentials' })
 @Index('idx_auth_credentials_user', ['user'], { unique: true })
 @Index('idx_auth_credentials_password_reset_token', ['passwordResetToken'])
-@Index('idx_auth_credentials_email_verification_token', [
-  'emailVerificationToken',
-])
-@Index('idx_auth_credentials_phone_verification_token', [
-  'phoneVerificationToken',
-])
+// @Index('idx_auth_credentials_email_verification_token', [
+//   'emailVerificationToken',
+// ])
+// @Index('idx_auth_credentials_phone_verification_token', [
+//   'phoneVerificationToken',
+// ])
 export class AuthCredentials {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -67,8 +67,8 @@ export class AuthCredentials {
   @Column({ name: 'mfa_enabled', type: 'boolean', default: false })
   mfaEnabled: boolean;
 
-  @Column({ name: 'mfa_secret', nullable: true })
-  mfaSecret?: string;
+  // @Column({ name: 'mfa_secret', nullable: true })
+  // mfaSecret?: string;
 
   @Column({
     name: 'last_password_change_at',
@@ -83,25 +83,25 @@ export class AuthCredentials {
   @Column({ name: 'lockout_until', type: 'timestamptz', nullable: true })
   lockoutUntil?: Date;
 
-  @Column({ name: 'email_verification_token', unique: true, nullable: true })
-  emailVerificationToken?: string;
+  // @Column({ name: 'email_verification_token', unique: true, nullable: true })
+  // emailVerificationToken?: string;
 
-  @Column({
-    name: 'email_verification_token_expires_at',
-    type: 'timestamptz',
-    nullable: true,
-  })
-  emailVerificationTokenExpiresAt?: Date;
+  // @Column({
+  //   name: 'email_verification_token_expires_at',
+  //   type: 'timestamptz',
+  //   nullable: true,
+  // })
+  // emailVerificationTokenExpiresAt?: Date;
 
-  @Column({ name: 'phone_verification_token', unique: true, nullable: true })
-  phoneVerificationToken?: string;
+  // @Column({ name: 'phone_verification_token', unique: true, nullable: true })
+  // phoneVerificationToken?: string;
 
-  @Column({
-    name: 'phone_verification_token_expires_at',
-    type: 'timestamptz',
-    nullable: true,
-  })
-  phoneVerificationTokenExpiresAt?: Date;
+  // @Column({
+  //   name: 'phone_verification_token_expires_at',
+  //   type: 'timestamptz',
+  //   nullable: true,
+  // })
+  // phoneVerificationTokenExpiresAt?: Date;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

@@ -5,7 +5,11 @@ import { CreateAuthCredentialsDto } from './create-auth-credentials.dto';
 import { ApiProperty } from '@nestjs/swagger';
 
 export class RegisterUserDto {
-  @ApiProperty({ type: CreateUserDto, description: 'User profile data' })
+  @ApiProperty({
+    type: CreateUserDto,
+    description: 'User profile data',
+    required: true, // Añadido
+  })
   @ValidateNested()
   @Type(() => CreateUserDto)
   user: CreateUserDto;
@@ -13,6 +17,7 @@ export class RegisterUserDto {
   @ApiProperty({
     type: CreateAuthCredentialsDto,
     description: 'Authentication credentials data',
+    required: true, // Añadido
   })
   @ValidateNested()
   @Type(() => CreateAuthCredentialsDto)

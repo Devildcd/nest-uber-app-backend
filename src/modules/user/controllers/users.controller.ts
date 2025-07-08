@@ -13,6 +13,7 @@ import {
   Param,
   Delete,
   ParseUUIDPipe,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -28,6 +29,7 @@ import {
   ApiQuery,
   ApiUnauthorizedResponse,
   ApiForbiddenResponse,
+  ApiBearerAuth,
 } from '@nestjs/swagger';
 import { UserService } from '../services/user.service';
 import { RegisterUserDto } from '../dto/register-user.dto';
@@ -41,9 +43,13 @@ import { plainToInstance } from 'class-transformer';
 import { UsersListResponseDto } from '../dto/users-list-response.dto';
 import { UserResponseWrapperDto } from '../dto/user-response-wrapper.dto';
 import { ChangePasswordResponseDto } from 'src/modules/user/dto/change-password-response.dto';
+import { JwtAuthGuard } from 'src/modules/auth/guards/jwt-auth.guard';
+import { GetUserId } from 'src/modules/auth/decorators/get-user-id.decorator';
+import { UserProfileDto } from '../dto/user-profile.dto';
 
 @ApiTags('users')
 @Controller('users')
+@UseGuards(JwtAuthGuard)
 // @UseGuards(AuthGuard, RolesGuard)
 // @Roles('admin')
 export class UserController {
@@ -101,6 +107,51 @@ export class UserController {
     return plainToInstance(UsersListResponseDto, apiResp, {
       excludeExtraneousValues: true,
     });
+  }
+
+  /**
+   * GET /users/profile
+   * Devuelve el perfil del usuario autenticado.
+   */
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Get('profile')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get current user profile' })
+  @ApiOkResponse({
+    description: 'Perfil del usuario autenticado obtenido correctamente',
+    schema: {
+      example: {
+        success: true,
+        message: 'Perfil obtenido correctamente',
+        data: {
+          name: 'David',
+          email: 'david@gmail.com',
+          phoneNumber: '+5355552993',
+          profilePictureUrl: 'https://example.com/avatar.jpg',
+          createdAt: '2025-07-02T13:00:13.346Z',
+        },
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Invalid or expired token / No credentials',
+  })
+  @ApiInternalServerErrorResponse({
+    description: 'Internal error while getting user profile',
+  })
+  async getMe(
+    @GetUserId() userId: string,
+  ): Promise<ApiResponse<UserProfileDto>> {
+    this.logger.log(`Fetching profile for user: ${userId}`);
+    const apiResp: ApiResponse<UserProfileDto | null> =
+      await this.userService.getProfile(userId);
+
+    return {
+      success: true,
+      message: 'Profile obtained correctly',
+      data: apiResp.data ?? undefined,
+    };
   }
 
   @Get(':id')
