@@ -85,4 +85,7 @@ export class Session {
 
   @Column({ unique: true })
   jti: string;
+
+  @Column({ type: 'boolean', default: false })
+  revoked: boolean;
 }
