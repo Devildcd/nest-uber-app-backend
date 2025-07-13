@@ -20,7 +20,10 @@ import {
 import { LoginDto } from '../dto/login.dto';
 import { LoginResponseDto } from '../dto/login-response.dto';
 import { plainToInstance } from 'class-transformer';
-import { Response as ExpressResponse } from 'express';
+import {
+  Request as ExpressRequest,
+  Response as ExpressResponse,
+} from 'express';
 import { Public } from '../decorators/public.decorator';
 import { RefreshResponseDto } from '../dto/refresh-response.dto';
 
@@ -39,6 +42,7 @@ export class AuthController {
   @ApiUnauthorizedResponse({ description: 'Invalid credentials' })
   @ApiCookieAuth()
   async login(
+    @Req() req: ExpressRequest,
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: ExpressResponse,
   ): Promise<LoginResponseDto> {
@@ -47,6 +51,7 @@ export class AuthController {
     // Si el servicio lanza UnauthorizedException, Nest responderá 401 automáticamente.
     const { accessToken, refreshToken } = await this.authService.login(
       dto,
+      req,
       res,
     );
 

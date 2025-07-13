@@ -10,8 +10,12 @@ import { UserService } from 'src/modules/user/services/user.service';
 import { TokenService } from './token.service';
 import { Session, SessionType } from '../entities/session.entity';
 import { SessionRepository } from '../repositories/session.repository';
-import { Response as ExpressResponse } from 'express';
+import {
+  Request as ExpressRequest,
+  Response as ExpressResponse,
+} from 'express';
 import { RefreshTokenPayload } from '../interfaces/token.interface';
+import { DeviceService } from 'src/modules/auth/services/device.service';
 
 @Injectable()
 export class AuthService {
@@ -22,6 +26,7 @@ export class AuthService {
     private readonly tokenService: TokenService,
     private readonly dataSource: DataSource,
     private readonly sessionRepo: SessionRepository,
+    private readonly deviceService: DeviceService,
   ) {}
 
   /**
@@ -29,10 +34,7 @@ export class AuthService {
    * - En WEB: el refreshToken va en cookie HttpOnly
    * - En Mobile/API: ambos tokens se devuelven en el body
    */
-  async login(
-    dto: LoginDto,
-    res?: ExpressResponse,
-  ): Promise<{ accessToken: string; refreshToken?: string }> {
+  async login(dto: LoginDto, req: ExpressRequest, res?: ExpressResponse) {
     const qr = this.dataSource.createQueryRunner();
     await qr.connect();
     await qr.startTransaction();
@@ -47,11 +49,10 @@ export class AuthService {
         },
         qr.manager,
       );
-      if (!user) {
+      if (!user)
         throw new UnauthorizedException('Email o contraseña inválidos');
-      }
 
-      // 2) Generar tokens
+      // 2) Tokens
       const { token: accessToken, expiresIn: accessTtl } =
         this.tokenService.createAccessToken({
           sub: user.id,
@@ -66,30 +67,35 @@ export class AuthService {
         email: user.email,
       });
 
-      // 3) Obtener repositorio “bare” de Session dentro de la transacción
+      // 3) Contexto cliente
+      const context = this.deviceService.getClientContext(req);
+      const sessionType =
+        dto.sessionType ??
+        this.deviceService.inferSessionType(context.device.deviceType);
+
+      // 4) Crear sesión
       const sessionRepo: Repository<Session> =
         qr.manager.getRepository(Session);
-
       const newSession = sessionRepo.create({
         user,
-        sessionType: dto.sessionType ?? SessionType.WEB,
+        sessionType,
         accessToken,
         refreshToken,
         jti,
         accessTokenExpiresAt: new Date(Date.now() + accessTtl),
         refreshTokenExpiresAt: new Date(Date.now() + refreshTtl),
-        deviceInfo: dto.deviceInfo,
-        ipAddress: dto.ipAddress,
-        userAgent: dto.userAgent,
-        location: dto.location,
+        deviceInfo: context.device,
+        ipAddress: context.ip,
+        userAgent: context.userAgent,
+        location: context.location,
       });
 
-      // 4) Guardar sesión y hacer commit
+      // 5) Guardar y commit
       await sessionRepo.save(newSession);
       await qr.commitTransaction();
 
-      // 5) Devolver tokens (y cookie en WEB)
-      if (dto.sessionType === SessionType.WEB && res) {
+      // 6) Devolver + cookie si WEB
+      if (sessionType === SessionType.WEB && res) {
         res.cookie('refreshToken', refreshToken, {
           httpOnly: true,
           secure: process.env.NODE_ENV === 'production',
@@ -103,11 +109,10 @@ export class AuthService {
       return { accessToken, refreshToken };
     } catch (err) {
       await qr.rollbackTransaction();
-      if (err instanceof UnauthorizedException) {
-        throw err;
-      }
+      if (err instanceof UnauthorizedException) throw err;
+
       this.logger.error('Login error', err);
-      throw new BadRequestException('Unexpected error during login');
+      throw new BadRequestException('Error inesperado durante el login');
     } finally {
       await qr.release();
     }
