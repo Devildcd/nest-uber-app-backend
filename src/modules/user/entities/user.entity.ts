@@ -1,6 +1,8 @@
 import { AuthCredentials } from 'src/modules/user/entities/auth-credentials.entity';
 import { Session } from 'src/modules/auth/entities/session.entity';
 import { Vehicle } from 'src/modules/vehicles/entities/vehicle.entity';
+import { Trip } from 'src/modules/trip/entities/trip.entity';
+import { SavedLocation } from 'src/modules/location/entities/saved_location.entity';
 import {
   Column,
   CreateDateColumn,
@@ -72,6 +74,15 @@ export class User {
   @OneToMany(() => Vehicle, (vehicle) => vehicle.driver)
   vehicles: Vehicle[];
 
+  @OneToMany(() => Trip, (trip) => trip.passenger)
+  requestedTrips: Trip[];
+
+  @OneToMany(() => Trip, (trip) => trip.driver)
+  assignedTrips: Trip[];
+
+  @OneToMany(() => SavedLocation, (location) => location.user)
+  locations: SavedLocation[];
+  
   @Column({ type: 'enum', enum: UserStatus, default: UserStatus.ACTIVE })
   status: UserStatus;
 
