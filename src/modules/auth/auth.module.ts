@@ -13,6 +13,7 @@ import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { APP_GUARD } from '@nestjs/core';
+import { DeviceService } from 'src/modules/auth/services/device.service';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { APP_GUARD } from '@nestjs/core';
     AuthService,
     AuthCredentialsRepository,
     TokenService,
+    DeviceService,
     JwtService,
     SessionRepository,
     JwtStrategy,

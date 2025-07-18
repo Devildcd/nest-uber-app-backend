@@ -3,6 +3,10 @@ export interface TokenPayload {
   [key: string]: unknown;
 }
 
+export interface RefreshTokenPayload extends TokenPayload {
+  jti: string;
+}
+
 export interface SignedToken {
   token: string;
   expiresIn: number; // milliseconds
