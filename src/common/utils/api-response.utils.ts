@@ -51,11 +51,11 @@ export function formatErrorResponse<T = any>(
   };
 }
 
-export function handleServiceError(
+export function handleServiceError<T>(
   logger: Logger,
   error: any,
   context: string,
-): ApiResponse<null> {
+): ApiResponse<T> {
   const errorMessage = error instanceof Error ? error.message : String(error);
   const errorStack = error instanceof Error ? error.stack : undefined;
 

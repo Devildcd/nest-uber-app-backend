@@ -46,6 +46,7 @@ import { ChangePasswordResponseDto } from 'src/modules/user/dto/change-password-
 import { JwtAuthGuard } from 'src/modules/auth/guards/jwt-auth.guard';
 import { GetUserId } from 'src/modules/auth/decorators/get-user-id.decorator';
 import { UserProfileDto } from '../dto/user-profile.dto';
+import { Public } from 'src/modules/auth/decorators/public.decorator';
 
 @ApiTags('users')
 @Controller('users')
@@ -82,6 +83,7 @@ export class UserController {
     });
   }
 
+  @Public()
   @Get()
   @HttpCode(HttpStatus.OK)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))
