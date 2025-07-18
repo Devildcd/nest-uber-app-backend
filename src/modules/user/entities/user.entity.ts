@@ -12,6 +12,7 @@ import {
   //   ManyToOne,
   PrimaryGeneratedColumn,
 } from 'typeorm';
+import { DriverProfile } from 'src/modules/driver-profiles/entities/driver-profile.entity';
 
 export enum UserType {
   PASSENGER = 'passenger',
@@ -37,6 +38,9 @@ export class User {
 
   @OneToOne(() => AuthCredentials, (authCredentials) => authCredentials.user)
   authCredentials: AuthCredentials;
+
+  @OneToOne(() => DriverProfile, (driverProfile) => driverProfile.user)
+  driverProfile: DriverProfile;
 
   @OneToMany(() => Session, (session) => session.user)
   sessions: Session[];
