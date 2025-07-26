@@ -1,10 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Expose, Transform } from 'class-transformer';
+import { Expose, Transform, Type } from 'class-transformer';
 import {
   BackgroundCheckStatus,
+  DriverStatus,
   OnboardingStatus,
 } from '../entities/driver-profile.entity';
 import { EmergencyContactDto } from './emergency-contact.dto';
+import { UserDto } from './driver-profile-data.dto';
 
 export class DriverProfileResponseDto {
   @Expose()
@@ -21,6 +23,10 @@ export class DriverProfileResponseDto {
     example: 'b1e2f3a4-5678-90ab-cdef-1234567890ab',
   })
   userId: string;
+
+  @Expose()
+  @Type(() => UserDto)
+  user?: UserDto;
 
   @Expose()
   @ApiProperty({
@@ -55,8 +61,7 @@ export class DriverProfileResponseDto {
 
   @Expose()
   @ApiPropertyOptional({
-    description:
-      'Fecha en que se completó la verificación de antecedentes (ISO 8601)',
+    description: 'Fecha de verificación de antecedentes (ISO 8601)',
     example: '2025-07-10T12:34:56.000Z',
     type: String,
     format: 'date-time',
@@ -83,16 +88,25 @@ export class DriverProfileResponseDto {
     description: 'Información de contacto de emergencia',
     type: () => EmergencyContactDto,
   })
+  @Type(() => EmergencyContactDto)
   emergencyContactInfo?: EmergencyContactDto;
 
   @Expose()
+  @ApiProperty({
+    description: 'Estado operativo del driver',
+    enum: DriverStatus,
+    example: DriverStatus.ACTIVE,
+  })
+  driverStatus: DriverStatus;
+
+  @Expose()
   @ApiPropertyOptional({
-    description: 'Última vez que el driver estuvo en línea (ISO 8601)',
-    example: '2025-07-14T18:45:00.000Z',
+    description: 'Fecha límite de prioridad pagada (ISO 8601)',
+    example: '2025-08-01T00:00:00.000Z',
     type: String,
     format: 'date-time',
   })
-  lastOnlineAt?: string;
+  paidPriorityUntil?: string;
 
   @Expose()
   @ApiProperty({
@@ -111,4 +125,13 @@ export class DriverProfileResponseDto {
     format: 'date-time',
   })
   updatedAt: string;
+
+  @Expose()
+  @ApiPropertyOptional({
+    description: 'Fecha de eliminación del registro (ISO 8601)',
+    example: '2025-07-20T11:00:00.000Z',
+    type: String,
+    format: 'date-time',
+  })
+  deletedAt?: string;
 }

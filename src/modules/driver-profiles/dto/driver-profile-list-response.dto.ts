@@ -1,8 +1,9 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Expose, Type } from 'class-transformer';
 import { PaginationMetaDto } from 'src/common/dto/pagination-meta.dto';
-import { DriverProfileListItemDto } from './driver-profile-list-item.dto';
+
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
+import { DriverProfileListItemDto } from './driver-profile-list-item.dto';
 
 export class DriverProfilesListResponseDto extends ApiResponseDto<
   DriverProfileListItemDto[]

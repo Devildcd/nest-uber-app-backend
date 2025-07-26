@@ -109,12 +109,12 @@ export class DriverProfileService {
   async create(
     dto: CreateDriverProfileDto,
   ): Promise<ApiResponse<DriverProfileResponseDto>> {
-    const qr: QueryRunner = this.dataSource.createQueryRunner();
+    const qr = this.dataSource.createQueryRunner();
     await qr.connect();
     await qr.startTransaction();
 
     try {
-      // verificamos existencia de usuario
+      // 1) Cargamos sólo los campos necesarios del usuario
       const user = await this.userRepository.findOne({
         where: { id: dto.userId },
       });
@@ -122,32 +122,32 @@ export class DriverProfileService {
         throw new NotFoundException(`User ${dto.userId} no existe`);
       }
 
-      // destructuramos fechas + el resto
+      // 2) Desestructuramos fechas y resto de campos
       const {
-        userId,
         driverLicenseExpirationDate,
         backgroundCheckDate,
-        lastOnlineAt,
+        paidPriorityUntil,
         ...rest
       } = dto;
 
-      // payload con spread + conversión de fechas
-      const partial = {
-        user: { id: userId },
+      // 3) Preparamos el objeto de creación, convirtiendo strings a Date
+      const partial: Partial<DriverProfile> = {
+        user,
         ...rest,
         driverLicenseExpirationDate: new Date(driverLicenseExpirationDate),
         ...(backgroundCheckDate && {
           backgroundCheckDate: new Date(backgroundCheckDate),
         }),
-        ...(lastOnlineAt && { lastOnlineAt: new Date(lastOnlineAt) }),
+        ...(paidPriorityUntil && {
+          paidPriorityUntil: new Date(paidPriorityUntil),
+        }),
       };
 
-      // creamos el perfil
+      // 4) Persistimos en la transacción
       const profile = await this.repo.createAndSave(partial, qr.manager);
-
       await qr.commitTransaction();
 
-      // mapear a DTO de salida
+      // 5) Mapeamos a DTO de respuesta
       const data: DriverProfileResponseDto = {
         id: profile.id,
         userId: profile.user.id,
@@ -160,9 +160,11 @@ export class DriverProfileService {
         isApproved: profile.isApproved,
         onboardingStatus: profile.onboardingStatus,
         emergencyContactInfo: profile.emergencyContactInfo,
-        lastOnlineAt: profile.lastOnlineAt?.toISOString(),
+        driverStatus: profile.driverStatus,
+        paidPriorityUntil: profile.paidPriorityUntil?.toISOString(),
         createdAt: profile.createdAt.toISOString(),
         updatedAt: profile.updatedAt.toISOString(),
+        deletedAt: profile.deletedAt?.toISOString(),
       };
 
       return {
@@ -171,14 +173,10 @@ export class DriverProfileService {
         data,
       };
     } catch (err: any) {
-      // siempre rollback si hay error
       await qr.rollbackTransaction();
 
-      // 1. Manejo de errores de QueryFailedError (DB)
       if (err instanceof QueryFailedError) {
-        // err.driverError viene tipado según el driver de BD (en Postgres: { code, detail, ... })
         const pgErr = err.driverError as { code: string; detail?: string };
-
         if (pgErr.code === '23505') {
           return formatErrorResponse(
             'Resource conflict',
@@ -202,7 +200,6 @@ export class DriverProfileService {
         );
       }
 
-      // para cualquier otro error, delegamos al handler genérico
       return handleServiceError<DriverProfileResponseDto>(
         this.logger,
         err,
@@ -247,6 +244,21 @@ export class DriverProfileService {
       if (dto.emergencyContactInfo !== undefined)
         updates.emergencyContactInfo = dto.emergencyContactInfo;
 
+      if (dto.driverStatus !== undefined) {
+        updates.driverStatus = dto.driverStatus;
+
+        if (dto.paidPriorityUntil !== undefined)
+          updates.paidPriorityUntil = new Date(dto.paidPriorityUntil);
+
+        if (dto.onboardingStatus !== undefined)
+          updates.onboardingStatus = dto.onboardingStatus;
+        if (dto.backgroundCheckStatus !== undefined)
+          updates.backgroundCheckStatus = dto.backgroundCheckStatus;
+        if (dto.backgroundCheckDate !== undefined)
+          updates.backgroundCheckDate = new Date(dto.backgroundCheckDate);
+
+        if (dto.isApproved !== undefined) updates.isApproved = dto.isApproved;
+      }
       const updated = await queryRunner.manager.save(DriverProfile, {
         ...existing,
         ...updates,
