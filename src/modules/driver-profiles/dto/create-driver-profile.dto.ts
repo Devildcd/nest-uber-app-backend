@@ -12,10 +12,11 @@ import {
 import { Type } from 'class-transformer';
 import {
   BackgroundCheckStatus,
+  DriverStatus,
   OnboardingStatus,
 } from '../entities/driver-profile.entity';
 
-class EmergencyContactDto {
+export class EmergencyContactDto {
   @IsString()
   @Length(1, 100)
   name: string;
@@ -66,6 +67,10 @@ export class CreateDriverProfileDto {
   emergencyContactInfo?: EmergencyContactDto;
 
   @IsOptional()
+  @IsEnum(DriverStatus)
+  driverStatus?: DriverStatus;
+
+  @IsOptional()
   @IsDateString()
-  lastOnlineAt?: string;
+  paidPriorityUntil?: string;
 }

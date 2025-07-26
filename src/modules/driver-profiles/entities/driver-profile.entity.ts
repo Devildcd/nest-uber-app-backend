@@ -22,8 +22,17 @@ export enum OnboardingStatus {
   REGISTERED = 'registered',
   DOCUMENTS_UPLOADED = 'documents_uploaded',
   BACKGROUND_CHECK_DONE = 'background_check_done',
+  TRAINING_COMPLETED = 'training_completed',
   APPROVED = 'approved',
   REJECTED = 'rejected',
+}
+
+export enum DriverStatus {
+  ACTIVE = 'active',
+  SUSPENDED = 'suspended',
+  ON_VACATION = 'on_vacation',
+  PENDING_DOCS = 'pending_docs',
+  DEACTIVATED = 'deactivated',
 }
 
 @Entity({ name: 'driver_profiles' })
@@ -31,14 +40,12 @@ export enum OnboardingStatus {
 @Index(['driverLicenseNumber'], { unique: true })
 @Index(['backgroundCheckStatus'])
 @Index(['isApproved'])
+@Index(['driverStatus'])
 export class DriverProfile {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @OneToOne(() => User, {
-    nullable: false,
-    onDelete: 'CASCADE',
-  })
+  @OneToOne(() => User, { nullable: false, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'user_id' })
   user: User;
 
@@ -84,8 +91,16 @@ export class DriverProfile {
     relationship: string;
   };
 
-  @Column({ name: 'last_online_at', type: 'timestamptz', nullable: true })
-  lastOnlineAt?: Date;
+  @Column({
+    name: 'driver_status',
+    type: 'enum',
+    enum: DriverStatus,
+    default: DriverStatus.PENDING_DOCS,
+  })
+  driverStatus: DriverStatus;
+
+  @Column({ name: 'paid_priority_until', type: 'timestamptz', nullable: true })
+  paidPriorityUntil?: Date;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

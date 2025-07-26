@@ -1,5 +1,7 @@
 import {
+  IsBoolean,
   IsDateString,
+  IsEnum,
   IsOptional,
   IsString,
   IsUrl,
@@ -9,6 +11,11 @@ import {
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { EmergencyContactDto } from './emergency-contact.dto';
+import {
+  BackgroundCheckStatus,
+  DriverStatus,
+  OnboardingStatus,
+} from '../entities/driver-profile.entity';
 
 export class UpdateDriverProfileDto {
   @IsOptional()
@@ -44,4 +51,55 @@ export class UpdateDriverProfileDto {
     description: 'Nuevo contacto de emergencia',
   })
   emergencyContactInfo?: EmergencyContactDto;
+
+  @IsOptional()
+  @IsEnum(DriverStatus)
+  @ApiPropertyOptional({
+    description: 'Nuevo estado operativo del driver',
+    enum: DriverStatus,
+    example: DriverStatus.ACTIVE,
+  })
+  driverStatus?: DriverStatus;
+
+  @IsOptional()
+  @IsDateString()
+  @ApiPropertyOptional({
+    description: 'Nueva fecha límite de prioridad pagada (ISO 8601)',
+    example: '2025-08-01T00:00:00.000Z',
+  })
+  paidPriorityUntil?: string;
+
+  @IsOptional()
+  @IsEnum(OnboardingStatus)
+  @ApiPropertyOptional({
+    description: 'Nuevo estado de onboarding',
+    enum: OnboardingStatus,
+    example: OnboardingStatus.REGISTERED,
+  })
+  onboardingStatus?: OnboardingStatus;
+
+  @IsOptional()
+  @IsEnum(BackgroundCheckStatus)
+  @ApiPropertyOptional({
+    description: 'Nuevo estado de verificación de antecedentes',
+    enum: BackgroundCheckStatus,
+    example: BackgroundCheckStatus.PENDING,
+  })
+  backgroundCheckStatus?: BackgroundCheckStatus;
+
+  @IsOptional()
+  @IsDateString()
+  @ApiPropertyOptional({
+    description: 'Nueva fecha de verificación de antecedentes (ISO 8601)',
+    example: '2025-07-10T12:34:56.000Z',
+  })
+  backgroundCheckDate?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  @ApiPropertyOptional({
+    description: 'Indica si el driver está aprobado para operar',
+    example: true,
+  })
+  isApproved?: boolean;
 }

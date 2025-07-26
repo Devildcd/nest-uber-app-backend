@@ -1,11 +1,39 @@
-import { Expose } from 'class-transformer';
+import { Expose, Type } from 'class-transformer';
+import {
+  BackgroundCheckStatus,
+  DriverStatus,
+  OnboardingStatus,
+} from '../entities/driver-profile.entity';
+
+export class UserDto {
+  @Expose()
+  name: string;
+
+  @Expose()
+  phoneNumber?: string;
+
+  @Expose()
+  email?: string;
+}
+
+export class EmergencyContactDto {
+  @Expose()
+  name: string;
+
+  @Expose()
+  phoneNumber: string;
+
+  @Expose()
+  relationship: string;
+}
 
 export class DriverProfileDataDto {
   @Expose()
   id: string;
 
   @Expose()
-  user: { id: string; email?: string };
+  @Type(() => UserDto)
+  user: UserDto;
 
   @Expose()
   driverLicenseNumber: string;
@@ -17,7 +45,7 @@ export class DriverProfileDataDto {
   driverLicensePictureUrl?: string;
 
   @Expose()
-  backgroundCheckStatus: string;
+  backgroundCheckStatus: BackgroundCheckStatus;
 
   @Expose()
   backgroundCheckDate?: Date;
@@ -26,17 +54,24 @@ export class DriverProfileDataDto {
   isApproved: boolean;
 
   @Expose()
-  onboardingStatus: string;
+  onboardingStatus: OnboardingStatus;
 
   @Expose()
-  emergencyContactInfo?: Record<string, unknown>;
+  @Type(() => EmergencyContactDto)
+  emergencyContactInfo?: EmergencyContactDto;
 
   @Expose()
-  lastOnlineAt?: Date;
+  driverStatus: DriverStatus;
+
+  @Expose()
+  paidPriorityUntil?: Date;
 
   @Expose()
   createdAt: Date;
 
   @Expose()
   updatedAt: Date;
+
+  @Expose()
+  deletedAt?: Date;
 }

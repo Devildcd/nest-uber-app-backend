@@ -8,15 +8,29 @@ export type OnboardingStatus =
   | 'registered'
   | 'documents_uploaded'
   | 'background_check_done'
+  | 'training_completed'
   | 'approved'
   | 'rejected';
 
+export type DriverStatus =
+  | 'active'
+  | 'suspended'
+  | 'on_vacation'
+  | 'pending_docs'
+  | 'deactivated';
+
+/**
+ * Información de contacto de emergencia para un driver
+ */
 export interface IEmergencyContact {
   name: string;
   phoneNumber: string;
   relationship: string;
 }
 
+/**
+ * Representación del perfil de conductor según la entidad TypeORM
+ */
 export interface IDriverProfile {
   id: string;
   userId: string;
@@ -28,7 +42,9 @@ export interface IDriverProfile {
   isApproved: boolean;
   onboardingStatus: OnboardingStatus;
   emergencyContactInfo?: IEmergencyContact;
-  lastOnlineAt?: Date;
+  driverStatus: DriverStatus;
+  paidPriorityUntil?: Date;
   createdAt: Date;
   updatedAt: Date;
+  deletedAt?: Date;
 }
