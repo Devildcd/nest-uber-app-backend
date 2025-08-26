@@ -14,6 +14,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 import { APP_GUARD } from '@nestjs/core';
 import { DeviceService } from 'src/modules/auth/services/device.service';
+import { DataSource } from 'typeorm';
 
 @Module({
   imports: [
@@ -44,11 +45,24 @@ import { DeviceService } from 'src/modules/auth/services/device.service';
     JwtStrategy,
     JwtAuthGuard,
     {
+      provide: SessionRepository, // El "token" de inyección será la propia clase
+      useFactory: (dataSource: DataSource) => {
+        // La fábrica recibe el DataSource inyectado...
+        return new SessionRepository(dataSource); // ...y lo usa para crear la instancia
+      },
+      inject: [DataSource], // Le decimos a NestJS que inyecte el DataSource en la fábrica
+    },
+    {
       provide: APP_GUARD,
       useClass: JwtAuthGuard,
     },
   ],
-  exports: [AuthService, AuthCredentialsRepository, JwtAuthGuard],
+  exports: [
+    AuthService,
+    AuthCredentialsRepository,
+    JwtAuthGuard,
+    SessionRepository,
+  ],
   controllers: [AuthController],
 })
 export class AuthModule {}

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   HttpCode,
@@ -48,22 +49,29 @@ export class AuthController {
   ): Promise<LoginResponseDto> {
     this.logger.log(`Logging in user: ${dto.email ?? dto.phoneNumber}`);
 
-    // Si el servicio lanza UnauthorizedException, Nest responderá 401 automáticamente.
-    const { accessToken, refreshToken } = await this.authService.login(
-      dto,
-      req,
-      res,
-    );
+    const {
+      accessToken,
+      refreshToken, // sólo vendrá para mobile / cuando el service lo retorna
+      sessionType,
+      accessTokenExpiresAt,
+      refreshTokenExpiresAt,
+    } = await this.authService.login(dto, req, res);
 
     return plainToInstance(
       LoginResponseDto,
-      { accessToken, refreshToken },
       {
-        excludeExtraneousValues: true,
+        accessToken: accessToken ?? null,
+        // Si refreshToken no viene (porque se puso en cookie) no lo incluimos en body
+        ...(refreshToken ? { refreshToken } : {}),
+        sessionType,
+        accessTokenExpiresAt,
+        refreshTokenExpiresAt,
       },
+      { excludeExtraneousValues: true },
     );
   }
 
+  @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Refresh access token using a valid refresh token' })
@@ -85,20 +93,44 @@ export class AuthController {
     @Res({ passthrough: true }) res: ExpressResponse,
   ): Promise<RefreshResponseDto> {
     this.logger.log('Refreshing access token');
-    // accedemos con null‑safe y preferimos la cookie
-    const oldRt = req.cookies?.refreshToken ?? refreshTokenBody;
-    const { accessToken, refreshToken } = await this.authService.refreshTokens(
-      oldRt,
-      res,
-    );
+
+    const cookieRt = req.cookies?.refreshToken;
+    const oldRt = cookieRt ?? refreshTokenBody;
+
+    if (!oldRt) {
+      // no cookie ni body -> cliente hizo mal la petición
+      throw new BadRequestException('No refresh token provided');
+    }
+
+    // Sólo pasamos `res` al service si el refresh viene desde la cookie (WEB/API_CLIENT).
+    // Si proviene del body (mobile), no queremos que el server fuerce una cookie.
+    const passRes = !!cookieRt;
+
+    const {
+      accessToken,
+      refreshToken, // vendrá únicamente cuando no se usen cookies (mobile)
+      accessTokenExpiresAt,
+      refreshTokenExpiresAt,
+      sid,
+      sessionType,
+    } = await this.authService.refreshTokens(oldRt, passRes ? res : undefined);
 
     return plainToInstance(
       RefreshResponseDto,
-      { accessToken, refreshToken },
+      {
+        accessToken,
+        // include refreshToken only if service returned it (mobile)
+        ...(refreshToken ? { refreshToken } : {}),
+        accessTokenExpiresAt,
+        refreshTokenExpiresAt,
+        sid,
+        sessionType,
+      },
       { excludeExtraneousValues: true },
     );
   }
 
+  @Public()
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Logout and revoke current refresh token' })

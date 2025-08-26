@@ -7,6 +7,7 @@ import {
 import { Session, SessionType } from '../entities/session.entity';
 import { Logger } from '@nestjs/common';
 import { handleRepositoryError } from 'src/common/utils/handle-repository-error';
+import argon2 from 'argon2';
 
 export class SessionRepository extends Repository<Session> {
   private readonly logger = new Logger(SessionRepository.name);
@@ -26,39 +27,60 @@ export class SessionRepository extends Repository<Session> {
     }
   }
 
-  /** Busca sesión por accessToken (útil para validar JWT) */
-  async findByAccessToken(token: string): Promise<Session | null> {
+  /** Busca sesión por jti (session id) — reemplaza findByAccessToken */
+  async findByJti(jti: string): Promise<Session | null> {
     try {
       return this.findOne({
-        where: { accessToken: token },
+        where: { jti },
         relations: ['user'],
       });
     } catch (err) {
-      handleRepositoryError(
-        this.logger,
-        err,
-        'findByAccessToken',
-        this.entityName,
-      );
+      handleRepositoryError(this.logger, err, 'findByJti', this.entityName);
     }
   }
 
-  /** Verifica si existe un refreshToken dado */
-  async existsByRefreshToken(token: string): Promise<boolean> {
+  /**
+   * Verifica si el refreshToken dado corresponde a la sesión con ese jti.
+   * - no hace escaneo de tabla
+   * - devuelve false si no existe session o hash mismatch
+   */
+  async existsByJtiAndRefreshToken(
+    jti: string,
+    refreshToken: string,
+  ): Promise<boolean> {
     try {
-      return this.createQueryBuilder('session')
-        .select('1')
-        .where('session.refreshToken = :token', { token })
-        .getExists();
+      const session = await this.findOne({ where: { jti } });
+      if (!session) return false;
+      // session.refreshTokenHash debe existir
+      if (!session.refreshTokenHash) return false;
+      try {
+        return await argon2.verify(session.refreshTokenHash, refreshToken);
+      } catch {
+        // verify lanza en algunos casos; tratamos como mismatch
+        return false;
+      }
     } catch (err) {
       handleRepositoryError(
         this.logger,
         err,
-        'existsByRefreshToken',
+        'existsByJtiAndRefreshToken',
         this.entityName,
       );
     }
+    return false;
   }
+
+  /**
+   * Helper: marca sesión como revocada (útil cuando detectas reuse/tampering)
+   */
+  async revokeByJti(jti: string): Promise<void> {
+    try {
+      await this.update({ jti }, { revoked: true, lastActivityAt: new Date() });
+    } catch (err) {
+      handleRepositoryError(this.logger, err, 'revokeByJti', this.entityName);
+    }
+  }
+
   /** Actualiza la última actividad de una sesión */
   async touch(sessionId: string): Promise<void> {
     try {
