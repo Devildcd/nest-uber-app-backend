@@ -12,13 +12,11 @@ import { User } from '../../user/entities/user.entity';
 export enum SessionType {
   WEB = 'web',
   MOBILE_APP = 'mobile_app',
-  ADMIN_PANEL = 'admin_panel',
   API_CLIENT = 'api_client',
 }
 
 @Entity({ name: 'sessions' })
-@Index(['accessToken'])
-@Index(['refreshToken'])
+@Index(['jti'], { unique: true })
 @Index(['lastSuccessfulLoginAt'])
 @Index(['lastActivityAt'])
 export class Session {
@@ -34,17 +32,14 @@ export class Session {
   @Column({ type: 'enum', enum: SessionType, default: SessionType.WEB })
   sessionType: SessionType;
 
-  @Column({ unique: true })
-  accessToken: string;
+  @Column({ type: 'text', nullable: false })
+  refreshTokenHash: string;
 
-  @Column({ unique: true })
-  refreshToken: string;
+  @Column({ type: 'timestamptz', nullable: true })
+  accessTokenExpiresAt: Date | null;
 
-  @Column({ type: 'timestamptz' })
-  accessTokenExpiresAt: Date;
-
-  @Column({ type: 'timestamptz' })
-  refreshTokenExpiresAt: Date;
+  @Column({ type: 'timestamptz', nullable: true })
+  refreshTokenExpiresAt: Date | null;
 
   @Column({ type: 'timestamptz', default: () => 'CURRENT_TIMESTAMP' })
   lastSuccessfulLoginAt: Date;
