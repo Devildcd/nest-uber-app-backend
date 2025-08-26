@@ -13,6 +13,8 @@ import { DatabaseConfigService } from './database/database-config/database-confi
 import { DatabaseModule } from './database/database.module';
 import { VehiclesModule } from './modules/vehicles/vehicles.module';
 import { DriverProfilesModule } from './modules/driver-profiles/driver-profiles.module';
+import { VehicleCategoryModule } from './modules/vehicle-category/vehicle-category.module';
+import { VehicleTypesModule } from './modules/vehicle-types/vehicle-types.module';
 
 @Module({
   imports: [
@@ -25,7 +27,9 @@ import { DriverProfilesModule } from './modules/driver-profiles/driver-profiles.
     TripModule,
     DatabaseModule,
     VehiclesModule,
+    VehicleCategoryModule,
     DriverProfilesModule,
+    VehicleTypesModule,
   ],
   controllers: [AppController],
   providers: [AppService, DatabaseConfigService],
