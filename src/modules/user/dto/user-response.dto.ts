@@ -22,7 +22,7 @@ export class UserResponseDto {
     description: 'Email address',
     example: 'carlos.martinez@example.com',
   })
-  email: string;
+  email?: string;
 
   @Expose()
   @ApiProperty({

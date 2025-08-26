@@ -12,7 +12,7 @@ export class UserListItemDto {
 
   @Expose()
   @ApiProperty({ example: 'maria.lopez@example.com' })
-  email: string;
+  email?: string;
 
   @Expose()
   @ApiPropertyOptional({

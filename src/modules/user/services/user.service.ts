@@ -153,43 +153,142 @@ export class UserService {
     manager?: EntityManager,
   ): Promise<ApiResponse<User>> {
     const repo = (manager ?? this.dataSource.manager).getRepository(User);
-    const email = dto.email.toLowerCase();
 
-    const partial: Partial<User> = {
-      ...dto,
-      email,
-      status: dto.status ?? UserStatus.ACTIVE,
-      termsAcceptedAt: dto.termsAcceptedAt
-        ? new Date(dto.termsAcceptedAt)
-        : undefined,
-      privacyPolicyAcceptedAt: dto.privacyPolicyAcceptedAt
-        ? new Date(dto.privacyPolicyAcceptedAt)
-        : undefined,
-    };
+    // --- Normalización segura ---
+    const emailRaw = dto.email ?? null;
+    const phoneRaw = dto.phoneNumber ?? null;
 
+    const email = emailRaw ? String(emailRaw).trim().toLowerCase() : null;
+    // Normalize phone: quitar espacios y paréntesis, mantener + prefijo si existe
+    const phone = phoneRaw
+      ? String(phoneRaw)
+          .replace(/[\s()-]/g, '')
+          .trim()
+      : null;
+
+    // --- Validación rápida de negocio (defensa adicional) ---
+    if (!email && !phone) {
+      // Aunque class-validator debería haber atrapado esto, lo validamos defensivamente.
+      return formatErrorResponse<User>(
+        'Either email or phoneNumber must be provided',
+        'MISSING_CONTACT',
+      );
+    }
+
+    // --- Comprobar duplicados antes de intentar crear (mejor UX/errores claros) ---
     try {
+      // Creamos condiciones de búsqueda dinámicas
+      const whereConditions: any[] = [];
+      if (email) whereConditions.push({ email });
+      if (phone) whereConditions.push({ phoneNumber: phone });
+
+      if (whereConditions.length > 0) {
+        // findOne con array -> OR entre condiciones
+        const existing = await repo.findOne({ where: whereConditions });
+        if (existing) {
+          // Detectar exactamente qué campo colisiona
+          if (
+            email &&
+            existing.email &&
+            existing.email.toLowerCase() === email
+          ) {
+            this.logger.warn(`Duplicate email registration attempt: ${email}`);
+            return formatErrorResponse<User>(
+              'Email is already registered',
+              'EMAIL_CONFLICT',
+            );
+          }
+          if (phone && existing.phoneNumber && existing.phoneNumber === phone) {
+            this.logger.warn(`Duplicate phone registration attempt: ${phone}`);
+            return formatErrorResponse<User>(
+              'Phone number is already registered',
+              'PHONE_CONFLICT',
+            );
+          }
+          // fallback: conflicto genérico
+          return formatErrorResponse<User>(
+            'Credentials already exist',
+            'CREDENTIALS_CONFLICT',
+          );
+        }
+      }
+
+      // --- Construir partial user sólo con campos definidos (no enviar undefined) ---
+      const partial: Partial<User> = {
+        name: dto.name,
+        userType: dto.userType,
+        status: dto.status ?? UserStatus.ACTIVE,
+      };
+
+      if (email) partial.email = email;
+      if (phone) partial.phoneNumber = phone;
+
+      if (dto.profilePictureUrl)
+        partial.profilePictureUrl = dto.profilePictureUrl;
+      if (dto.currentLocation)
+        partial.currentLocation = dto.currentLocation as any;
+      if (dto.vehicleId) {
+        // Assuming vehicleId is a string or string[], and Vehicle is an entity with at least an 'id' property
+        partial.vehicles = Array.isArray(dto.vehicleId)
+          ? dto.vehicleId.map((id) => ({ id }) as any)
+          : [{ id: dto.vehicleId } as any];
+      }
+      if (dto.preferredLanguage)
+        partial.preferredLanguage = dto.preferredLanguage;
+      if (dto.termsAcceptedAt)
+        partial.termsAcceptedAt = new Date(dto.termsAcceptedAt);
+      if (dto.privacyPolicyAcceptedAt)
+        partial.privacyPolicyAcceptedAt = new Date(dto.privacyPolicyAcceptedAt);
+
+      // Crear y guardar usando repo (si manager provisto, repo ya viene del manager)
       const user = repo.create(partial);
       const saved = await repo.save(user);
+
       this.logger.log(`User created: ${saved.id}`);
       return formatSuccessResponse('User created successfully', saved);
     } catch (err: any) {
-      // caso de duplicado de email
+      // Duplicate error by DB constraint (fallback a detectar 23505)
       if (
         (err as { code?: string; detail?: string }).code === '23505' &&
-        (err as { detail?: string }).detail?.includes('email')
+        (err as { detail?: string }).detail
       ) {
-        this.logger.warn(`Duplicate email registration: ${email}`);
+        const detail =
+          typeof err === 'object' && err !== null && 'detail' in err
+            ? (err as { detail: string }).detail
+            : '';
+        // mejorar mensajes según el campo en el detail
+        if (detail.includes('email')) {
+          this.logger.warn(`Duplicate email registration (DB): ${email}`);
+          return formatErrorResponse<User>(
+            'Email is already registered',
+            'EMAIL_CONFLICT',
+          );
+        }
+        if (
+          detail.includes('phone') ||
+          detail.includes('phone_number') ||
+          detail.includes('phoneNumber')
+        ) {
+          this.logger.warn(`Duplicate phone registration (DB): ${phone}`);
+          return formatErrorResponse<User>(
+            'Phone number is already registered',
+            'PHONE_CONFLICT',
+          );
+        }
+        // fallback genérico para 23505
         return formatErrorResponse<User>(
-          'Email is already registered',
-          'EMAIL_CONFLICT',
+          'Unique constraint violation',
+          'UNIQUE_CONSTRAINT',
         );
       }
-      // cualquier otro error: fallback
+
+      // cualquier otro error: fallback genérico y log
       if (err instanceof Error) {
-        this.logger.error('createUser failed', err.stack || err.message);
+        this.logger.error('createUser failed', err.stack ?? err.message);
       } else {
         this.logger.error('createUser failed', String(err));
       }
+
       return formatErrorResponse<User>(
         'Failed to create user',
         'CREATE_USER_ERROR',
@@ -311,46 +410,110 @@ export class UserService {
    * Edita los campos permitidos de un usuario.
    */
   async update(id: string, dto: UpdateUserDto): Promise<ApiResponse<User>> {
-    // Sólo estos campos pueden actualizarse
-    const updateData: Partial<User> = {
-      name: dto.name,
-      phoneNumber: dto.phoneNumber,
-      email: dto.email?.toLowerCase(),
-    };
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
 
     try {
-      const updated = await this.userRepository.updateUser(id, updateData);
-      return formatSuccessResponse('User updated successfully', updated);
-    } catch (err: any) {
-      // 404 de repositorio
-      if (err instanceof NotFoundException) {
+      const manager = qr.manager;
+      const repo = manager.getRepository(User);
+
+      // 1) lock fila del usuario para update (FOR UPDATE)
+      const user = await manager
+        .createQueryBuilder(User, 'u')
+        .setLock('pessimistic_write')
+        .where('u.id = :id', { id })
+        .getOne();
+
+      if (!user) {
+        await qr.rollbackTransaction();
         return formatErrorResponse<User>('User not found', 'USER_NOT_FOUND');
       }
-      // duplicado de email
-      if (
-        (err as { code?: string; detail?: string }).code === '23505' &&
-        (err as { detail?: string }).detail?.includes('email')
-      ) {
-        this.logger.warn(`Email conflict on update: ${dto.email}`);
+
+      // calcular nuevos valores
+      const emailProvided = dto.email !== undefined;
+      const phoneProvided = dto.phoneNumber !== undefined;
+
+      const newEmail = emailProvided
+        ? dto.email
+          ? dto.email.trim().toLowerCase()
+          : null
+        : user.email;
+      const newPhone = phoneProvided
+        ? dto.phoneNumber
+          ? dto.phoneNumber.replace(/[\s()-]/g, '').trim()
+          : null
+        : user.phoneNumber;
+
+      if (!newEmail && !newPhone) {
+        await qr.rollbackTransaction();
         return formatErrorResponse<User>(
-          'Email is already registered',
-          'EMAIL_CONFLICT',
+          'Either email or phoneNumber must be present',
+          'MISSING_CONTACT',
         );
       }
-      // fallback genérico
-      if (err instanceof Error) {
-        this.logger.error(
-          `update failed for user ${id}`,
-          err.stack || err.message,
-        );
-      } else {
-        this.logger.error(`update failed for user ${id}`, String(err));
+
+      // 2) check duplicados usando locks sobre rows candidatas
+      if (newEmail && newEmail !== user.email) {
+        const other = await manager
+          .createQueryBuilder(User, 'u')
+          .setLock('pessimistic_write')
+          .where('u.email = :email', { email: newEmail })
+          .getOne();
+        if (other && other.id !== id) {
+          await qr.rollbackTransaction();
+          return formatErrorResponse<User>(
+            'Email is already registered',
+            'EMAIL_CONFLICT',
+          );
+        }
       }
+
+      if (newPhone && newPhone !== user.phoneNumber) {
+        const other = await manager
+          .createQueryBuilder(User, 'u')
+          .setLock('pessimistic_write')
+          .where('u.phoneNumber = :phone', { phone: newPhone })
+          .getOne();
+        if (other && other.id !== id) {
+          await qr.rollbackTransaction();
+          return formatErrorResponse<User>(
+            'Phone number is already registered',
+            'PHONE_CONFLICT',
+          );
+        }
+      }
+
+      // 3) aplicar cambios y guardar
+      if (dto.name !== undefined) user.name = dto.name;
+      if (emailProvided) user.email = newEmail ?? undefined;
+      if (phoneProvided) user.phoneNumber = newPhone ?? undefined;
+      if (dto.userType !== undefined) user.userType = dto.userType;
+      // ...otros cambios permitidos
+
+      const saved = await repo.save(user);
+
+      await qr.commitTransaction();
+      return formatSuccessResponse('User updated successfully', saved);
+    } catch (err: any) {
+      await qr.rollbackTransaction();
+      // manejar 23505 como fallback
+      if (err?.code === '23505') {
+        // inspeccionar detalle y mapear a EMAIL_CONFLICT / PHONE_CONFLICT
+        return formatErrorResponse<User>(
+          'Unique constraint violation',
+          'UNIQUE_CONSTRAINT',
+          err,
+        );
+      }
+      this.logger.error('update failed', err);
       return formatErrorResponse<User>(
-        'Failed to update user',
+        'UPDATE_USER_ERROR',
         'UPDATE_USER_ERROR',
         err,
       );
+    } finally {
+      await qr.release();
     }
   }
 
