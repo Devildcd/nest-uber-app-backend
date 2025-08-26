@@ -48,13 +48,13 @@ export class User {
   @Column({ length: 100 })
   name: string;
 
-  @Column({ unique: true, length: 150 })
-  email: string;
+  @Column({ nullable: true, unique: true, length: 150 })
+  email?: string;
 
   @Column({ default: false })
   emailVerified: boolean;
 
-  @Column({ nullable: true, length: 20 })
+  @Column({ nullable: true, unique: true, length: 20 })
   phoneNumber?: string;
 
   @Column({ default: false })

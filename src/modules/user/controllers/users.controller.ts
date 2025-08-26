@@ -61,6 +61,7 @@ export class UserController {
     // private readonly authCredService: AuthService,
   ) {}
 
+  @Public()
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Register a new user with credentials' })

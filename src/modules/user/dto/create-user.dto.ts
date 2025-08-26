@@ -13,6 +13,7 @@ import {
   IsNumber,
   IsUUID,
   IsNotEmpty,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { UserType, UserStatus } from '../entities/user.entity';
@@ -38,12 +39,13 @@ export class CreateUserDto {
     format: 'email',
     maxLength: 150,
   })
+  @ValidateIf((o: CreateUserDto) => !o.phoneNumber)
   @IsEmail()
   @Length(5, 150)
-  email: string;
+  email?: string;
 
   @ApiPropertyOptional({ description: 'Phone number', example: '+34123456789' })
-  @IsOptional()
+  @ValidateIf((o: CreateUserDto) => !o.email)
   @IsString()
   @Length(10, 20)
   phoneNumber?: string;

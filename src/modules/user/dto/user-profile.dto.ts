@@ -6,10 +6,10 @@ export class UserProfileDto {
   name: string;
 
   @Expose()
-  email: string;
+  email?: string;
 
   @Expose()
-  phoneNumber: string;
+  phoneNumber?: string;
 
   @Expose()
   profilePictureUrl: string;
