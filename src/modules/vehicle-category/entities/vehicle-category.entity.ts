@@ -6,8 +6,9 @@ import {
   UpdateDateColumn,
   Index,
   DeleteDateColumn,
+  OneToMany,
 } from 'typeorm';
-
+import {VehicleType} from '../../vehicle-types/entities/vehicle-types.entity';
 /**
  * Entity: VehicleCategory
  * Catálogo base de categorías físicas de vehículos (Automóvil, Motocicleta, Furgoneta, SUV, etc.)
@@ -29,6 +30,9 @@ export class VehicleCategory {
 
   @Column({ type: 'boolean', default: true })
   isActive: boolean;
+
+  @OneToMany(() => VehicleType, (vt) => vt.category)
+  vehicleTypes?: VehicleType[];
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

@@ -10,9 +10,11 @@ import {
   Index,
   DeleteDateColumn,
   JoinColumn,
+  OneToMany,
 } from 'typeorm';
 import { VehicleCategory } from '../../vehicle-category/entities/vehicle-category.entity';
 import { VehicleServiceClass } from '../../vehicle-service-classes/entities/vehicle-service-classes.entity';
+import { Vehicle } from '../../vehicles/entities/vehicle.entity';
 
 @Entity('vehicle_types')
 export class VehicleType {
@@ -65,7 +67,10 @@ export class VehicleType {
   })
   serviceClasses: VehicleServiceClass[];
 
-  @CreateDateColumn({
+@OneToMany(() => Vehicle, (v) => v.vehicleType)
+vehicles?: Vehicle[];
+
+@CreateDateColumn({
     name: 'created_at',
     type: 'timestamptz',
     default: () => 'CURRENT_TIMESTAMP',
