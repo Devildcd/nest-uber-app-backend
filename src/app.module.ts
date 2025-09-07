@@ -15,6 +15,8 @@ import { VehiclesModule } from './modules/vehicles/vehicles.module';
 import { DriverProfilesModule } from './modules/driver-profiles/driver-profiles.module';
 import { VehicleCategoryModule } from './modules/vehicle-category/vehicle-category.module';
 import { VehicleTypesModule } from './modules/vehicle-types/vehicle-types.module';
+import { VehicleServiceClass } from './modules/vehicle-service-classes/entities/vehicle-service-classes.entity';
+import { Vehicle } from './modules/vehicles/entities/vehicle.entity';
 
 @Module({
   imports: [
@@ -30,6 +32,8 @@ import { VehicleTypesModule } from './modules/vehicle-types/vehicle-types.module
     VehicleCategoryModule,
     DriverProfilesModule,
     VehicleTypesModule,
+    VehicleServiceClass,
+    Vehicle
   ],
   controllers: [AppController],
   providers: [AppService, DatabaseConfigService],
