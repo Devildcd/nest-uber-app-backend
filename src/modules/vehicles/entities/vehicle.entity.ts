@@ -8,6 +8,8 @@ import {
   ManyToOne,
   JoinColumn,
   DeleteDateColumn,
+  RelationId,
+  ValueTransformer,
 } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { DriverProfile } from '../../driver-profiles/entities/driver-profile.entity';
@@ -20,6 +22,16 @@ export enum VehicleStatus {
   MAINTENANCE = 'maintenance',
   UNAVAILABLE = 'unavailable',
 }
+/**
+ * Transformer para normalizar plateNumber al persistir:
+ * - to(): lo que se guarda en la BD (trim + uppercase)
+ * - from(): lo que se obtiene de la BD (se devuelve tal cual)
+ */
+export const plateTransformer: ValueTransformer = {
+  to: (value?: string) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  from: (value?: string) => value,
+};
 /**
  * Entity: vehicles
  * Registro maestro de vehículos físicos en la plataforma.
@@ -62,7 +74,7 @@ export class Vehicle {
   year: number;
 
   @Index('uq_vehicle_plate_number', { unique: true })
-  @Column({ name: 'plate_number', type: 'varchar', length: 15, unique: true })
+  @Column({ name: 'plate_number', type: 'varchar', length: 15, unique: true, transformer: plateTransformer })
   plateNumber: string;
 
   @Column({ nullable: true, length: 30 })
