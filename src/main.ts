@@ -4,6 +4,8 @@ import { SwaggerService } from './docs/swagger/swagger.service';
 import { ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as cookieParser from 'cookie-parser';
+import { ApiResponseInterceptor } from './common/interceptors/api-response.interceptor';
+import { GlobalExceptionFilter } from './common/utils/postgres-exception.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -26,6 +28,12 @@ async function bootstrap() {
       transform: true,
     }),
   );
+
+   // Interceptor de respuesta estándar
+  app.useGlobalInterceptors(new ApiResponseInterceptor());
+
+  // Filtro global de errores → ApiResponseDto (success=false)
+  app.useGlobalFilters(new GlobalExceptionFilter());
 
   app.enableCors({
     origin: (origin, callback) => {

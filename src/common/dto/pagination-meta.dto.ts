@@ -14,4 +14,10 @@ export class PaginationMetaDto {
   @Expose()
   @ApiProperty({ example: 10, description: 'Items per page limit' })
   limit: number;
+
+  @ApiProperty() pageCount!: number;
+  @ApiProperty() hasNext: boolean;
+  @ApiProperty() hasPrev: boolean;
+  @ApiProperty({ required: false, nullable: true }) nextPage?: number | null;
+  @ApiProperty({ required: false, nullable: true }) prevPage?: number | null;
 }
