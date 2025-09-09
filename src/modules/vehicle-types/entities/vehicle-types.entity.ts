@@ -67,10 +67,10 @@ export class VehicleType {
   })
   serviceClasses: VehicleServiceClass[];
 
-@OneToMany(() => Vehicle, (v) => v.vehicleType)
-vehicles?: Vehicle[];
+  @OneToMany(() => Vehicle, (v) => v.vehicleType)
+  vehicles?: Vehicle[];
 
-@CreateDateColumn({
+  @CreateDateColumn({
     name: 'created_at',
     type: 'timestamptz',
     default: () => 'CURRENT_TIMESTAMP',
@@ -86,7 +86,7 @@ vehicles?: Vehicle[];
 
   @DeleteDateColumn({
     name: 'deleted_at',
-    type: 'timestamptz',    
+    type: 'timestamptz',
   })
   deletedAt?: Date;
 }

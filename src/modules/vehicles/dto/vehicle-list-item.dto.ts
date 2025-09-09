@@ -11,7 +11,7 @@ export class VehicleListItemDto {
   @ApiProperty({ example: 'Toyota' })
   make: string;
 
-  @Expose()  
+  @Expose()
   @ApiProperty({ example: 'Corolla' })
   model: string;
 

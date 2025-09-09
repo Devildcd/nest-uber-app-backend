@@ -24,7 +24,7 @@ import { VehicleResponseDto } from '../dto/vehicle-response.dto';
 import { VehicleListItemDto } from '../dto/vehicle-list-item.dto';
 import { DriverProfileRepository } from 'src/modules/driver-profiles/repositories/driver-profile.repository';
 import { VehicleFilterDto } from '../dto/vehicle-filter.dto';
-import { UserRepository} from "../../user/repositories/user.repository";
+import { UserRepository } from '../../user/repositories/user.repository';
 import { VehicleListResponseDto } from '../dto/vehicle-list-item-response.dto';
 @Injectable()
 export class VehiclesService {
@@ -60,13 +60,9 @@ export class VehiclesService {
       }
 
       // Verificar driver
-      const driver = await this.UserRepository.findById(
-        dto.driverId,
-      );
+      const driver = await this.UserRepository.findById(dto.driverId);
       if (!driver) {
-        throw new NotFoundException(
-          `DriverId ${dto.driverId} not found`,
-        );
+        throw new NotFoundException(`DriverId ${dto.driverId} not found`);
       }
 
       // Vaalidar driver profile
@@ -79,14 +75,17 @@ export class VehiclesService {
         );
       }
       if (dto.plateNumber) {
-      const existingPlate = await this.repo.findByPlateNumber(dto.plateNumber, queryRunner.manager);
-      if (existingPlate) {
-        return formatErrorResponse<VehicleResponseDto>(
-          `Vehicle plate number "${dto.plateNumber}" already exists`,
-          'PLATE_NUMBER_CONFLICT',
+        const existingPlate = await this.repo.findByPlateNumber(
+          dto.plateNumber,
+          queryRunner.manager,
         );
+        if (existingPlate) {
+          return formatErrorResponse<VehicleResponseDto>(
+            `Vehicle plate number "${dto.plateNumber}" already exists`,
+            'PLATE_NUMBER_CONFLICT',
+          );
+        }
       }
-    }
 
       const partial: Partial<Vehicle> = {
         ...dto,
@@ -95,7 +94,10 @@ export class VehiclesService {
         driverProfile,
       };
 
-      const vehicle = await this.repo.createAndSave(partial, queryRunner.manager);
+      const vehicle = await this.repo.createAndSave(
+        partial,
+        queryRunner.manager,
+      );
 
       await queryRunner.commitTransaction();
 
@@ -110,7 +112,7 @@ export class VehiclesService {
       );
     } catch (error: any) {
       await queryRunner.rollbackTransaction();
-       if (error instanceof QueryFailedError) {
+      if (error instanceof QueryFailedError) {
         const pgErr = error.driverError as { code: string; detail?: string };
         if (pgErr.code === '23505') {
           return formatErrorResponse(
@@ -148,9 +150,12 @@ export class VehiclesService {
     filters?: VehicleFilterDto,
   ): Promise<ApiResponse<Vehicle[]>> {
     try {
-      const [items, total] = await this.repo.findAllPaginated(pagination, filters);
-    //   const mapped = items.map((v) => this.toListItemDto(v));
-      
+      const [items, total] = await this.repo.findAllPaginated(
+        pagination,
+        filters,
+      );
+      //   const mapped = items.map((v) => this.toListItemDto(v));
+
       return formatSuccessResponse<Vehicle[]>(
         'Vehicles retrieved successfully',
         // mapped,
@@ -181,26 +186,26 @@ export class VehiclesService {
         this.toResponseDto(vehicle),
       );
     } catch (error: any) {
-          this.logger.error(
-            'findById failed',
-            (error instanceof Error ? error.stack : undefined) ||
-              (typeof error === 'object' && 'message' in error
-                ? (error as { message: string }).message
-                : String(error)),
-          );
-    
-          const typedError = error as {
-            code?: string;
-            message?: string;
-            stack?: string;
-          };
-    
-          return formatErrorResponse<VehicleResponseDto>(
-            'Error fetching vehicle',
-            typedError.code,
-            typedError,
-          );
-        }
+      this.logger.error(
+        'findById failed',
+        (error instanceof Error ? error.stack : undefined) ||
+          (typeof error === 'object' && 'message' in error
+            ? (error as { message: string }).message
+            : String(error)),
+      );
+
+      const typedError = error as {
+        code?: string;
+        message?: string;
+        stack?: string;
+      };
+
+      return formatErrorResponse<VehicleResponseDto>(
+        'Error fetching vehicle',
+        typedError.code,
+        typedError,
+      );
+    }
   }
 
   // ------------------------------
@@ -247,27 +252,35 @@ export class VehiclesService {
         existing.driverProfile = driverProfile;
       }
       // validar nuevo plateNumber (si se quiere actualizar)
-      if (dto.plateNumber && dto.plateNumber.trim().toUpperCase() !== existing.plateNumber) {
-      const conflict = await this.repo.findByPlateNumber(dto.plateNumber, queryRunner.manager);
-      if (conflict && conflict.id !== id) {
-      return formatErrorResponse<Vehicle>(
-                  `Vehicle plate number "${dto.plateNumber}" already exists`,
-                  'PLATE_NUMBER_CONFLICT',
-              );
-    }
-    existing.plateNumber = dto.plateNumber; // transformer se encargará de normalizar al guardar
-  }
+      if (
+        dto.plateNumber &&
+        dto.plateNumber.trim().toUpperCase() !== existing.plateNumber
+      ) {
+        const conflict = await this.repo.findByPlateNumber(
+          dto.plateNumber,
+          queryRunner.manager,
+        );
+        if (conflict && conflict.id !== id) {
+          return formatErrorResponse<Vehicle>(
+            `Vehicle plate number "${dto.plateNumber}" already exists`,
+            'PLATE_NUMBER_CONFLICT',
+          );
+        }
+        existing.plateNumber = dto.plateNumber; // transformer se encargará de normalizar al guardar
+      }
       if (dto.capacity !== undefined) existing.capacity = dto.capacity;
       if (dto.isActive !== undefined) existing.isActive = dto.isActive;
       if (dto.color !== undefined) existing.color = dto.color;
       if (dto.make !== undefined) existing.make = dto.make;
       if (dto.model !== undefined) existing.model = dto.model;
       if (dto.year !== undefined) existing.year = dto.year;
-      if (dto.inspectionDate !== undefined) existing.inspectionDate = dto.inspectionDate;
-      if (dto.lastMaintenanceDate !== undefined) existing.lastMaintenanceDate = dto.lastMaintenanceDate;
+      if (dto.inspectionDate !== undefined)
+        existing.inspectionDate = dto.inspectionDate;
+      if (dto.lastMaintenanceDate !== undefined)
+        existing.lastMaintenanceDate = dto.lastMaintenanceDate;
       if (dto.mileage !== undefined) existing.mileage = dto.mileage;
       if (dto.status !== undefined) existing.status = dto.status;
-      
+
       const updated = await queryRunner.manager.save(Vehicle, existing);
 
       await queryRunner.commitTransaction();
@@ -277,41 +290,38 @@ export class VehiclesService {
         updated,
       );
     } catch (error: unknown) {
-          await queryRunner.rollbackTransaction();
-    
-          // Handle unique constraint violation
-          if (error instanceof QueryFailedError) {
-            const dbError = error.driverError as {
-              code?: string;
-              detail?: string;
-            };
-            if (
-              dbError.code === '23505' &&
-              dbError.detail?.includes('plate_number')
-            ) {
-              this.logger.warn(
-                `Platenumber conflict on update: ${dto.plateNumber}`,
-              );
-              return formatErrorResponse<Vehicle>(
-                'Vehicle plate number conflict',
-                'PLATE_NUMBER_CONFLICT',
-              );
-            }
-          }
-    
-          if (error instanceof NotFoundException) {
-            return formatErrorResponse<Vehicle>(error.message, 'NOT_FOUND');
-          }
-    
-          const err = error as Error;
-          this.logger.error(`update failed for Vehicle ${id}`, err.stack);
-          return formatErrorResponse<Vehicle>(
-            'Failed to update vehicle',
-            err.name,
+      await queryRunner.rollbackTransaction();
+
+      // Handle unique constraint violation
+      if (error instanceof QueryFailedError) {
+        const dbError = error.driverError as {
+          code?: string;
+          detail?: string;
+        };
+        if (
+          dbError.code === '23505' &&
+          dbError.detail?.includes('plate_number')
+        ) {
+          this.logger.warn(
+            `Platenumber conflict on update: ${dto.plateNumber}`,
           );
-        } finally {
-          await queryRunner.release();
+          return formatErrorResponse<Vehicle>(
+            'Vehicle plate number conflict',
+            'PLATE_NUMBER_CONFLICT',
+          );
         }
+      }
+
+      if (error instanceof NotFoundException) {
+        return formatErrorResponse<Vehicle>(error.message, 'NOT_FOUND');
+      }
+
+      const err = error as Error;
+      this.logger.error(`update failed for Vehicle ${id}`, err.stack);
+      return formatErrorResponse<Vehicle>('Failed to update vehicle', err.name);
+    } finally {
+      await queryRunner.release();
+    }
   }
 
   // ------------------------------
@@ -346,37 +356,39 @@ export class VehiclesService {
       );
     }
   }
-// ------------------------------
+  // ------------------------------
   // Find Driver Profile By VehicleId
   // ------------------------------
-async findDriverProfileByVehicleId(
-  vehicleId: string,
-): Promise<ApiResponse<DriverProfile>> {
-  try {
-    const vehicle = await this.repo.findWithRelations(vehicleId, ['driverProfile']);
-    if (!vehicle) {
-      return formatErrorResponse('Vehicle not found', 'NOT_FOUND');
-    }
-    if (!vehicle.driverProfile) {
-      return formatErrorResponse('Driver profile not found', 'NOT_FOUND');
-    }
+  async findDriverProfileByVehicleId(
+    vehicleId: string,
+  ): Promise<ApiResponse<DriverProfile>> {
+    try {
+      const vehicle = await this.repo.findWithRelations(vehicleId, [
+        'driverProfile',
+      ]);
+      if (!vehicle) {
+        return formatErrorResponse('Vehicle not found', 'NOT_FOUND');
+      }
+      if (!vehicle.driverProfile) {
+        return formatErrorResponse('Driver profile not found', 'NOT_FOUND');
+      }
 
-    return formatSuccessResponse<DriverProfile>(
-      'Driver profile retrieved successfully',
-      vehicle.driverProfile,
-    );
-  } catch (error: any) {
-    this.logger.error(
-      `findDriverProfileByVehicleId failed for ${vehicleId}`,
-      error.stack || error.message,
-    );
-    return formatErrorResponse<DriverProfile>(
-      'Error fetching driver profile',
-      'FIND_DRIVER_PROFILE_ERROR',
-      error,
-    );
+      return formatSuccessResponse<DriverProfile>(
+        'Driver profile retrieved successfully',
+        vehicle.driverProfile,
+      );
+    } catch (error: any) {
+      this.logger.error(
+        `findDriverProfileByVehicleId failed for ${vehicleId}`,
+        error.stack || error.message,
+      );
+      return formatErrorResponse<DriverProfile>(
+        'Error fetching driver profile',
+        'FIND_DRIVER_PROFILE_ERROR',
+        error,
+      );
+    }
   }
-}
 
   // ------------------------------
   // PRIVATE HELPERS
@@ -390,7 +402,7 @@ async findDriverProfileByVehicleId(
       color: vehicle.color ? vehicle.color : undefined,
       capacity: vehicle.capacity,
       status: vehicle.status,
-      plateNumber: vehicle.plateNumber, 
+      plateNumber: vehicle.plateNumber,
       isActive: vehicle.isActive,
       driverId: vehicle.driver?.id ?? null,
       vehicleTypeId: vehicle.vehicleType?.id ?? null,
@@ -439,10 +451,18 @@ async findDriverProfileByVehicleId(
       }
     }
     if (error instanceof NotFoundException) {
-      return formatErrorResponse('Resource not found', 'NOT_FOUND', error.message);
+      return formatErrorResponse(
+        'Resource not found',
+        'NOT_FOUND',
+        error.message,
+      );
     }
     if (error instanceof BadRequestException) {
-      return formatErrorResponse('Invalid request', 'BAD_REQUEST', error.message);
+      return formatErrorResponse(
+        'Invalid request',
+        'BAD_REQUEST',
+        error.message,
+      );
     }
     return handleServiceError(this.logger, error, context);
   }

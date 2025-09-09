@@ -8,29 +8,42 @@ import { VehicleTypeRepository } from '../vehicle-types/repositories/vehicle-typ
 import { DriverProfileRepository } from '../driver-profiles/repositories/driver-profile.repository';
 import { VehicleController } from './controllers/vehicle.controller';
 import { VehiclesService } from './services/vehicles.service';
-import { UserService } from "../user/services/user.service";
-import { User } from "../user/entities/user.entity";
-import { UserRepository } from "../user/repositories/user.repository";
+import { UserService } from '../user/services/user.service';
+import { User } from '../user/entities/user.entity';
+import { UserRepository } from '../user/repositories/user.repository';
 import { DataSource } from 'typeorm';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([Vehicle,VehicleType,DriverProfile,User,VehicleRepository,VehicleTypeRepository,DriverProfileRepository,UserRepository ])],
+  imports: [
+    TypeOrmModule.forFeature([
+      Vehicle,
+      VehicleType,
+      DriverProfile,
+      User,
+      VehicleRepository,
+      VehicleTypeRepository,
+      DriverProfileRepository,
+      UserRepository,
+    ]),
+  ],
   controllers: [VehicleController],
   providers: [
     VehiclesService,
-      {
+    {
       provide: VehicleRepository,
       useFactory: (dataSource: DataSource) => new VehicleRepository(dataSource),
       inject: [DataSource],
     },
     {
       provide: VehicleTypeRepository,
-      useFactory: (dataSource: DataSource) => new VehicleTypeRepository(dataSource),
+      useFactory: (dataSource: DataSource) =>
+        new VehicleTypeRepository(dataSource),
       inject: [DataSource],
     },
     {
       provide: DriverProfileRepository,
-      useFactory: (dataSource: DataSource) => new DriverProfileRepository(dataSource),
+      useFactory: (dataSource: DataSource) =>
+        new DriverProfileRepository(dataSource),
       inject: [DataSource],
     },
     {
@@ -38,7 +51,13 @@ import { DataSource } from 'typeorm';
       useFactory: (dataSource: DataSource) => new UserRepository(dataSource),
       inject: [DataSource],
     },
-    ],
-    exports: [VehicleTypeRepository, VehiclesService, VehicleRepository, DriverProfileRepository,UserRepository],
+  ],
+  exports: [
+    VehicleTypeRepository,
+    VehiclesService,
+    VehicleRepository,
+    DriverProfileRepository,
+    UserRepository,
+  ],
 })
 export class VehiclesModule {}

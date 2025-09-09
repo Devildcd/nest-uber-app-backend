@@ -1,6 +1,14 @@
-import { Type } from "class-transformer";
-import { IsDateString, IsEnum, IsInt, IsOptional, IsUUID, Max, Min } from "class-validator";
-import { PaymentMode, TripStatus } from "../entities/trip.entity";
+import { Type } from 'class-transformer';
+import {
+  IsDateString,
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsUUID,
+  Max,
+  Min,
+} from 'class-validator';
+import { PaymentMode, TripStatus } from '../entities/trip.entity';
 
 export class TripsQueryDto {
   @IsOptional()

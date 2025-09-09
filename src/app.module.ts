@@ -33,7 +33,7 @@ import { Vehicle } from './modules/vehicles/entities/vehicle.entity';
     DriverProfilesModule,
     VehicleTypesModule,
     VehicleServiceClass,
-    Vehicle
+    Vehicle,
   ],
   controllers: [AppController],
   providers: [AppService, DatabaseConfigService],

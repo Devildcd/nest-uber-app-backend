@@ -1,6 +1,15 @@
 // src/modules/vehicles/dto/vehicle-filter.dto.ts
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsUUID, IsString, IsInt, Min, Max, IsEnum, IsBoolean } from 'class-validator';
+import {
+  IsOptional,
+  IsUUID,
+  IsString,
+  IsInt,
+  Min,
+  Max,
+  IsEnum,
+  IsBoolean,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { VehicleStatus } from '../entities/vehicle.entity';
 

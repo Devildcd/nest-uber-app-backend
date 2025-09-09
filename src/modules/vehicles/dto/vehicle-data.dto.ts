@@ -56,34 +56,59 @@ export class VehicleDataDto {
   capacity: number;
 
   @Expose()
-  @ApiProperty({ description: 'Indica si el vehículo está activo', example: true })
+  @ApiProperty({
+    description: 'Indica si el vehículo está activo',
+    example: true,
+  })
   isActive: boolean;
 
   @Expose()
-  @ApiProperty({ description: 'Estado del vehículo', example: VehicleStatus.APPROVED, enum: VehicleStatus })
+  @ApiProperty({
+    description: 'Estado del vehículo',
+    example: VehicleStatus.APPROVED,
+    enum: VehicleStatus,
+  })
   status: VehicleStatus;
 
   @Expose()
-  @ApiPropertyOptional({ description: 'Fecha de última inspección (ISO 8601)', example: '2025-08-19T12:34:56.000Z' })
+  @ApiPropertyOptional({
+    description: 'Fecha de última inspección (ISO 8601)',
+    example: '2025-08-19T12:34:56.000Z',
+  })
   inspectionDate?: string;
 
   @Expose()
-  @ApiPropertyOptional({ description: 'Fecha último mantenimiento (ISO 8601)', example: '2025-08-01T09:00:00.000Z' })
+  @ApiPropertyOptional({
+    description: 'Fecha último mantenimiento (ISO 8601)',
+    example: '2025-08-01T09:00:00.000Z',
+  })
   lastMaintenanceDate?: string;
 
   @Expose()
-  @ApiPropertyOptional({ description: 'Kilometraje (mileage)', example: 120000 })
+  @ApiPropertyOptional({
+    description: 'Kilometraje (mileage)',
+    example: 120000,
+  })
   mileage?: number;
 
   @Expose()
-  @ApiProperty({ description: 'Fecha de creación (ISO 8601)', example: '2025-08-19T12:34:56.000Z' })
+  @ApiProperty({
+    description: 'Fecha de creación (ISO 8601)',
+    example: '2025-08-19T12:34:56.000Z',
+  })
   createdAt: string;
 
   @Expose()
-  @ApiProperty({ description: 'Última actualización (ISO 8601)', example: '2025-08-20T08:00:00.000Z' })
+  @ApiProperty({
+    description: 'Última actualización (ISO 8601)',
+    example: '2025-08-20T08:00:00.000Z',
+  })
   updatedAt: string;
 
   @Expose()
-  @ApiPropertyOptional({ description: 'Fecha de eliminación (soft delete) si aplica', example: null })
+  @ApiPropertyOptional({
+    description: 'Fecha de eliminación (soft delete) si aplica',
+    example: null,
+  })
   deletedAt?: string;
 }

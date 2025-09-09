@@ -2,13 +2,16 @@ import { Logger } from '@nestjs/common';
 import {
   EntityManager,
   EntityTarget,
-  ObjectLiteral,          // 👈 importa esto
+  ObjectLiteral, // 👈 importa esto
   Repository,
   SelectQueryBuilder,
 } from 'typeorm';
 import { handleRepositoryError } from '../utils/handle-repository-error';
 
-export abstract class BaseRepository<T extends ObjectLiteral> extends Repository<T> { // 👈 restricción
+export abstract class BaseRepository<
+  T extends ObjectLiteral,
+> extends Repository<T> {
+  // 👈 restricción
   protected readonly logger: Logger;
   protected readonly entityName: string;
 
@@ -50,7 +53,7 @@ export abstract class BaseRepository<T extends ObjectLiteral> extends Repository
       return await qb.getManyAndCount();
     } catch (err) {
       handleRepositoryError(this.logger, err, method, this.entityName);
-      throw err as any; // 👈 garantiza que el tipo no “caiga” en undefined si tu helper no lanza
+      throw err; // 👈 garantiza que el tipo no “caiga” en undefined si tu helper no lanza
     }
   }
 
@@ -63,7 +66,7 @@ export abstract class BaseRepository<T extends ObjectLiteral> extends Repository
       return await qb.getOne();
     } catch (err) {
       handleRepositoryError(this.logger, err, method, this.entityName);
-      throw err as any; // 👈 idem
+      throw err; // 👈 idem
     }
   }
 

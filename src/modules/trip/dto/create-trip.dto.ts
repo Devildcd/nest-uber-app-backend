@@ -11,7 +11,6 @@ import { Type } from 'class-transformer';
 import { PaymentMode } from '../entities/trip.entity';
 import { GeoPointDto } from 'src/common/dto/geo-point.dto';
 
-
 export class CreateTripDto {
   @IsUUID()
   passengerId!: string;
