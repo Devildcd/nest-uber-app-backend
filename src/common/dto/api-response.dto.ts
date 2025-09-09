@@ -1,13 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Expose } from 'class-transformer';
 
-export class PaginationMetaDto {
-  @ApiProperty() total: number;
-  @ApiProperty() page: number;
-  @ApiProperty() limit: number;
-}
-
-export class ApiResponseDto<T> {
+export class ApiResponseDto<T, M = unknown> {
   @Expose()
   @ApiProperty({ example: true })
   success: boolean;
@@ -32,5 +26,5 @@ export class ApiResponseDto<T> {
     description: 'Pagination metadata',
     type: () => Object,
   })
-  meta?: any;
+   meta?: M;
 }
