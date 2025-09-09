@@ -99,66 +99,63 @@ export class VehicleTypeController {
     this.logger.log(
       `Fetching vehicle type — page ${pagination.page}, limit ${pagination.limit}`,
     );
-  
-    const apiResp = await this.vehicleTypesService.findAll(
-        pagination,
-        filters,
-    );
-  
+
+    const apiResp = await this.vehicleTypesService.findAll(pagination, filters);
+
     return plainToInstance(VehicleTypeListResponseDto, apiResp, {
       excludeExtraneousValues: true,
     });
   }
 
-@Public()
-@Get(':id')
-@HttpCode(HttpStatus.OK)
-@ApiOperation({ summary: 'Get a single vehicle type by ID' })
-@ApiParam({
+  @Public()
+  @Get(':id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Get a single vehicle type by ID' })
+  @ApiParam({
     name: 'id',
     description: 'UUID of the vehicle type',
     type: 'string',
     format: 'uuid',
-    })
-@ApiOkResponse({
-      description: 'vehicle type retrieved',
-      type: VehicleTypeResponseWrapperDto,
-    })
-@ApiNotFoundResponse({ description: 'Vehicle type not found' })
-async findById(
-@Param('id') id: string,
-): Promise<VehicleTypeResponseWrapperDto> {
-  this.logger.log(`Fetching vehicle type by id: ${id}`);  
-  // El servicio retorna ApiResponse<VehicleType>
-      const apiResp = await this.vehicleTypesService.findById(id);
-  
-  // PlainToInstance aplicará @Expose/@Transform del DTO interno
-  return plainToInstance(VehicleTypeResponseWrapperDto, apiResp, {
-        excludeExtraneousValues: true,
-  });
+  })
+  @ApiOkResponse({
+    description: 'vehicle type retrieved',
+    type: VehicleTypeResponseWrapperDto,
+  })
+  @ApiNotFoundResponse({ description: 'Vehicle type not found' })
+  async findById(
+    @Param('id') id: string,
+  ): Promise<VehicleTypeResponseWrapperDto> {
+    this.logger.log(`Fetching vehicle type by id: ${id}`);
+    // El servicio retorna ApiResponse<VehicleType>
+    const apiResp = await this.vehicleTypesService.findById(id);
+
+    // PlainToInstance aplicará @Expose/@Transform del DTO interno
+    return plainToInstance(VehicleTypeResponseWrapperDto, apiResp, {
+      excludeExtraneousValues: true,
+    });
   }
 
-@Public()
-@Patch(':id')
-@HttpCode(HttpStatus.OK)
-@ApiOperation({ summary: 'Update a vehicle type' })
-@ApiParam({
+  @Public()
+  @Patch(':id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Update a vehicle type' })
+  @ApiParam({
     name: 'id',
     description: 'UUID of the vehicle type',
     type: 'string',
     format: 'uuid',
-})
-@ApiBody({ type: UpdateVehicleTypeDto })
-@ApiOkResponse({
+  })
+  @ApiBody({ type: UpdateVehicleTypeDto })
+  @ApiOkResponse({
     description: 'Vehicle type updated',
     type: VehicleTypeResponseWrapperDto, // ← aquí el wrapper
-})
-@ApiNotFoundResponse({ description: 'Vehicle type not found' })
-@ApiConflictResponse({ description: 'Vehicle type name conflict' })
-async update(
-  @Param('id') id: string,
-  @Body() dto: UpdateVehicleTypeDto,
-): Promise<VehicleTypeResponseWrapperDto> {
+  })
+  @ApiNotFoundResponse({ description: 'Vehicle type not found' })
+  @ApiConflictResponse({ description: 'Vehicle type name conflict' })
+  async update(
+    @Param('id') id: string,
+    @Body() dto: UpdateVehicleTypeDto,
+  ): Promise<VehicleTypeResponseWrapperDto> {
     this.logger.log(`Updating vehicle type ${id}`);
     const apiResp = await this.vehicleTypesService.update(id, dto);
 
@@ -166,33 +163,33 @@ async update(
       excludeExtraneousValues: true,
     });
   }
-  
+
   @Public()
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Soft-delete a vehicle type' })
   @ApiParam({
-      name: 'id',
-      description: 'UUID of the vehicle type',
-      type: 'string',
-      format: 'uuid',
+    name: 'id',
+    description: 'UUID of the vehicle type',
+    type: 'string',
+    format: 'uuid',
   })
   @ApiOkResponse({
-      description: 'Vehicle type deleted',
-      type: VehicleTypeResponseWrapperDto, // ← aquí el wrapper
-    })
+    description: 'Vehicle type deleted',
+    type: VehicleTypeResponseWrapperDto, // ← aquí el wrapper
+  })
   @ApiNotFoundResponse({ description: 'Vehicle type not found' })
   async remove(
-      @Param('id') id: string,
-    ): Promise<VehicleTypeResponseWrapperDto> {
-      this.logger.log(`Deleting vehicle type ${id}`);
-  
-      // El servicio retorna ApiResponse<null>
-      const apiResp = await this.vehicleTypesService.remove(id);
-  
-      // Si quieres devolver sólo un mensaje sin data, tu wrapper aún lo mostrará:
-      return plainToInstance(VehicleTypeResponseWrapperDto, apiResp, {
-        excludeExtraneousValues: true,
-      });
-    }
+    @Param('id') id: string,
+  ): Promise<VehicleTypeResponseWrapperDto> {
+    this.logger.log(`Deleting vehicle type ${id}`);
+
+    // El servicio retorna ApiResponse<null>
+    const apiResp = await this.vehicleTypesService.remove(id);
+
+    // Si quieres devolver sólo un mensaje sin data, tu wrapper aún lo mostrará:
+    return plainToInstance(VehicleTypeResponseWrapperDto, apiResp, {
+      excludeExtraneousValues: true,
+    });
+  }
 }

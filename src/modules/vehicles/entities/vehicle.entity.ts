@@ -37,7 +37,6 @@ export const plateTransformer: ValueTransformer = {
  * Registro maestro de vehículos físicos en la plataforma.
  */
 @Entity({ name: 'vehicles' })
-
 @Index(['plateNumber'])
 @Index(['vehicleType'])
 @Index(['isActive'])
@@ -58,9 +57,12 @@ export class Vehicle {
   @ManyToOne(() => DriverProfile, { nullable: false, onDelete: 'CASCADE' })
   @JoinColumn({ name: 'driver_profile_id' })
   driverProfile: DriverProfile;
-  
+
   @Index('idx_vehicle_vehicle_type')
-  @ManyToOne(() => VehicleType, (vt) => vt.vehicles, { nullable: false, onDelete: 'RESTRICT' })
+  @ManyToOne(() => VehicleType, (vt) => vt.vehicles, {
+    nullable: false,
+    onDelete: 'RESTRICT',
+  })
   @JoinColumn({ name: 'vehicle_type_id' })
   vehicleType: VehicleType;
 
@@ -74,7 +76,13 @@ export class Vehicle {
   year: number;
 
   @Index('uq_vehicle_plate_number', { unique: true })
-  @Column({ name: 'plate_number', type: 'varchar', length: 15, unique: true, transformer: plateTransformer })
+  @Column({
+    name: 'plate_number',
+    type: 'varchar',
+    length: 15,
+    unique: true,
+    transformer: plateTransformer,
+  })
   plateNumber: string;
 
   @Column({ nullable: true, length: 30 })
@@ -82,7 +90,7 @@ export class Vehicle {
 
   @Column({ type: 'int', default: 1 })
   capacity: number;
-  
+
   @Index('idx_vehicle_is_active')
   @Column({ default: true })
   isActive: boolean;
@@ -98,7 +106,11 @@ export class Vehicle {
   @Column({ name: 'inspection_date', type: 'timestamptz', nullable: true })
   inspectionDate?: Date;
 
-  @Column({ name: 'last_maintenance_date', type: 'timestamptz', nullable: true })
+  @Column({
+    name: 'last_maintenance_date',
+    type: 'timestamptz',
+    nullable: true,
+  })
   lastMaintenanceDate?: Date;
 
   @Column({ type: 'bigint', nullable: true })

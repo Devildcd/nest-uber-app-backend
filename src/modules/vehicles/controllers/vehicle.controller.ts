@@ -10,7 +10,7 @@ import {
   Query,
   HttpCode,
   HttpStatus,
-  Logger,  
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -52,13 +52,13 @@ export class VehicleController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Crear un nuevo vehículo' })
   @ApiBody({
-      type: CreateVehicleDto,
-      description: 'Datos del vehículo a crear',
-    })
+    type: CreateVehicleDto,
+    description: 'Datos del vehículo a crear',
+  })
   @ApiResponse({
-      description: 'Tipo de vehículo creado exitosamente',
-      type: CreateVehicleResponseDto,
-    })
+    description: 'Tipo de vehículo creado exitosamente',
+    type: CreateVehicleResponseDto,
+  })
   @ApiBadRequestResponse({
     description: 'Datos de entrada inválidos o violación de reglas de negocio',
   })
@@ -69,8 +69,9 @@ export class VehicleController {
   @ApiConflictResponse({
     description: 'Conflicto con datos existentes (placa duplicada)',
   })
-  
- async create(@Body() dto: CreateVehicleDto): Promise<CreateVehicleResponseDto> {
+  async create(
+    @Body() dto: CreateVehicleDto,
+  ): Promise<CreateVehicleResponseDto> {
     this.logger.log('create vehicle', dto);
     const apiResponse = await this.vehiclesService.create(dto);
     return apiResponse;
@@ -79,26 +80,33 @@ export class VehicleController {
   @Public()
   @Get()
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Listar vehículos (paginado, con filtros) solo admin' })
+  @ApiOperation({
+    summary: 'Listar vehículos (paginado, con filtros) solo admin',
+  })
   @ApiBadRequestResponse({ description: 'Invalid query parameters' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 10 })
   @ApiOkResponse({
-      description: 'Vehicles retrieved',
-      type: VehicleResponseDto,
-    })
+    description: 'Vehicles retrieved',
+    type: VehicleResponseDto,
+  })
   @ApiUnauthorizedResponse({ description: 'Authentication required' })
   @ApiForbiddenResponse({ description: 'Admins only' })
   async findAll(
     @Query() pagination: PaginationDto,
     @Query() filters?: VehicleFilterDto,
   ): Promise<VehicleListResponseDto> {
-    this.logger.log(`Fetching vehicle type — page ${pagination.page}, limit ${pagination.limit}`,);
+    this.logger.log(
+      `Fetching vehicle type — page ${pagination.page}, limit ${pagination.limit}`,
+    );
     const apiResponse = await this.vehiclesService.findAll(pagination, filters);
-    this.logger.debug('Vehicles fetched:', JSON.stringify(apiResponse, null, 2));
+    this.logger.debug(
+      'Vehicles fetched:',
+      JSON.stringify(apiResponse, null, 2),
+    );
     return plainToInstance(VehicleListResponseDto, apiResponse, {
-           excludeExtraneousValues: true,
-        });
+      excludeExtraneousValues: true,
+    });
   }
 
   @Public()
@@ -106,19 +114,17 @@ export class VehicleController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Obtener vehículo por id' })
   @ApiParam({
-      name: 'id',
-      description: 'UUID of the vehicle',
-      type: 'string',
-      format: 'uuid',
-      })
+    name: 'id',
+    description: 'UUID of the vehicle',
+    type: 'string',
+    format: 'uuid',
+  })
   @ApiOkResponse({
-        description: 'vehicle retrieved',
-        type: VehicleResponseWrapperDto,
-      })
+    description: 'vehicle retrieved',
+    type: VehicleResponseWrapperDto,
+  })
   @ApiNotFoundResponse({ description: 'Vehicle not found' })
-  async findById(
-    @Param('id') id: string,
-  ): Promise<VehicleResponseWrapperDto> {
+  async findById(@Param('id') id: string): Promise<VehicleResponseWrapperDto> {
     this.logger.log(`get vehicle ${id}`);
     const apiResponse = await this.vehiclesService.findById(id);
     return plainToInstance(VehicleResponseWrapperDto, apiResponse, {
@@ -131,18 +137,20 @@ export class VehicleController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Actualizar vehículo por id (parcial)' })
   @ApiBadRequestResponse({ description: 'Invalid input' })
-  @ApiNotFoundResponse({ description: 'Vehicle or related resources not found' })
+  @ApiNotFoundResponse({
+    description: 'Vehicle or related resources not found',
+  })
   @ApiConflictResponse({ description: 'Conflict (duplicate plate, etc.)' })
   @ApiParam({
-      name: 'id',
-      description: 'UUID of the vehicle type',
-      type: 'string',
-      format: 'uuid',
+    name: 'id',
+    description: 'UUID of the vehicle type',
+    type: 'string',
+    format: 'uuid',
   })
   @ApiBody({ type: UpdateVehicleDto })
   @ApiOkResponse({
-      description: 'Vehicle type updated',
-      type: VehicleResponseWrapperDto, // ← aquí el wrapper
+    description: 'Vehicle type updated',
+    type: VehicleResponseWrapperDto, // ← aquí el wrapper
   })
   async update(
     @Param('id') id: string,
@@ -161,18 +169,16 @@ export class VehicleController {
   @HttpCode(HttpStatus.OK)
   @ApiNotFoundResponse({ description: 'Vehicle not found' })
   @ApiParam({
-      name: 'id',
-      description: 'UUID of the vehicle type',
-      type: 'string',
-      format: 'uuid',
+    name: 'id',
+    description: 'UUID of the vehicle type',
+    type: 'string',
+    format: 'uuid',
   })
   @ApiOkResponse({
-        description: 'Vehicle type deleted',
-        type: VehicleResponseWrapperDto, // ← aquí el wrapper
-      })
-  async remove(
-    @Param('id') id: string,
-  ): Promise<VehicleResponseWrapperDto> {
+    description: 'Vehicle type deleted',
+    type: VehicleResponseWrapperDto, // ← aquí el wrapper
+  })
+  async remove(@Param('id') id: string): Promise<VehicleResponseWrapperDto> {
     this.logger.log(`delete vehicle ${id}`);
     const apiResponse = await this.vehiclesService.remove(id);
     return plainToInstance(VehicleResponseWrapperDto, apiResponse, {
@@ -180,30 +186,29 @@ export class VehicleController {
     });
   }
 
-@Public()
-@Get(':id/driver-profile')
-@HttpCode(HttpStatus.OK)
-@ApiOperation({ summary: 'Obtener el driver profile asociado a un vehículo' })
-@ApiParam({
-  name: 'id',
-  description: 'UUID of the vehicle',
-  type: 'string',
-  format: 'uuid',
-})
-@ApiOkResponse({
-  description: 'Driver profile retrieved successfully',
-  type: DriverProfileResponseWrapperDto,
-})
-@ApiNotFoundResponse({ description: 'Vehicle or driver profile not found' })
-async findDriverProfile(
-  @Param('id') id: string,
-): Promise<DriverProfileResponseWrapperDto> {
-  this.logger.log(`Fetching driver profile for vehicle ${id}`);
-  const apiResponse = await this.vehiclesService.findDriverProfileByVehicleId(
-    id,
-  );
-  return plainToInstance(DriverProfileResponseWrapperDto, apiResponse, {
-    excludeExtraneousValues: true,
-  });
-}
+  @Public()
+  @Get(':id/driver-profile')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Obtener el driver profile asociado a un vehículo' })
+  @ApiParam({
+    name: 'id',
+    description: 'UUID of the vehicle',
+    type: 'string',
+    format: 'uuid',
+  })
+  @ApiOkResponse({
+    description: 'Driver profile retrieved successfully',
+    type: DriverProfileResponseWrapperDto,
+  })
+  @ApiNotFoundResponse({ description: 'Vehicle or driver profile not found' })
+  async findDriverProfile(
+    @Param('id') id: string,
+  ): Promise<DriverProfileResponseWrapperDto> {
+    this.logger.log(`Fetching driver profile for vehicle ${id}`);
+    const apiResponse =
+      await this.vehiclesService.findDriverProfileByVehicleId(id);
+    return plainToInstance(DriverProfileResponseWrapperDto, apiResponse, {
+      excludeExtraneousValues: true,
+    });
+  }
 }

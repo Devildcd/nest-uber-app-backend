@@ -29,7 +29,7 @@ async function bootstrap() {
     }),
   );
 
-   // Interceptor de respuesta estándar
+  // Interceptor de respuesta estándar
   app.useGlobalInterceptors(new ApiResponseInterceptor());
 
   // Filtro global de errores → ApiResponseDto (success=false)

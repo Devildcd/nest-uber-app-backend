@@ -8,7 +8,7 @@ import {
   DeleteDateColumn,
   OneToMany,
 } from 'typeorm';
-import {VehicleType} from '../../vehicle-types/entities/vehicle-types.entity';
+import { VehicleType } from '../../vehicle-types/entities/vehicle-types.entity';
 /**
  * Entity: VehicleCategory
  * Catálogo base de categorías físicas de vehículos (Automóvil, Motocicleta, Furgoneta, SUV, etc.)

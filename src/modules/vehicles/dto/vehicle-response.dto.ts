@@ -55,31 +55,41 @@ export class VehicleResponseDto {
   vehicleTypeId: string;
 
   @Expose()
-  @Transform(({ obj }: any) => (obj.inspectionDate ? obj.inspectionDate.toISOString() : undefined))
+  @Transform(({ obj }: any) =>
+    obj.inspectionDate ? obj.inspectionDate.toISOString() : undefined,
+  )
   @ApiPropertyOptional({ type: String, format: 'date-time' })
   inspectionDate?: string;
 
   @Expose()
-  @Transform(({ obj }: any) => (obj.lastMaintenanceDate ? obj.lastMaintenanceDate.toISOString() : undefined))
+  @Transform(({ obj }: any) =>
+    obj.lastMaintenanceDate ? obj.lastMaintenanceDate.toISOString() : undefined,
+  )
   @ApiPropertyOptional({ type: String, format: 'date-time' })
   lastMaintenanceDate?: string;
 
   @Expose()
   @ApiPropertyOptional({ example: 45000 })
   mileage?: number;
-  
+
   @Expose()
-  @Transform(({ obj }: any) => (obj.createdAt ? obj.createdAt.toISOString() : undefined))
+  @Transform(({ obj }: any) =>
+    obj.createdAt ? obj.createdAt.toISOString() : undefined,
+  )
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt: string;
 
   @Expose()
-  @Transform(({ obj }: any) => (obj.updatedAt ? obj.updatedAt.toISOString() : undefined))
+  @Transform(({ obj }: any) =>
+    obj.updatedAt ? obj.updatedAt.toISOString() : undefined,
+  )
   @ApiProperty({ type: String, format: 'date-time' })
   updatedAt: string;
 
   @Expose()
-  @Transform(({ obj }: any) => (obj.deletedAt ? obj.deletedAt.toISOString() : undefined))
+  @Transform(({ obj }: any) =>
+    obj.deletedAt ? obj.deletedAt.toISOString() : undefined,
+  )
   @ApiPropertyOptional({ type: String, format: 'date-time' })
   deletedAt?: string;
 }

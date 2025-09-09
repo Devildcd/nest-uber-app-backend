@@ -26,5 +26,5 @@ export class ApiResponseDto<T, M = unknown> {
     description: 'Pagination metadata',
     type: () => Object,
   })
-   meta?: M;
+  meta?: M;
 }

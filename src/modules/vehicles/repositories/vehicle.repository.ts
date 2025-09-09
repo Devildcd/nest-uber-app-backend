@@ -36,7 +36,7 @@ export class VehicleRepository extends Repository<Vehicle> {
     try {
       return await repo.save(entity);
     } catch (err) {
-      handleRepositoryError(this.logger, err, 'createAndSave', this.entityName);      
+      handleRepositoryError(this.logger, err, 'createAndSave', this.entityName);
     }
   }
 
@@ -50,7 +50,7 @@ export class VehicleRepository extends Repository<Vehicle> {
         relations: ['driver', 'driverProfile', 'vehicleType'],
       });
     } catch (err) {
-      handleRepositoryError(this.logger, err, 'findById', this.entityName);      
+      handleRepositoryError(this.logger, err, 'findById', this.entityName);
     }
   }
 
@@ -69,8 +69,12 @@ export class VehicleRepository extends Repository<Vehicle> {
       const normalized = plateNumber.trim().toUpperCase();
       return await repo.findOne({ where: { plateNumber: normalized } });
     } catch (err) {
-      handleRepositoryError(this.logger, err, 'findByPlateNumber', this.entityName);
-      
+      handleRepositoryError(
+        this.logger,
+        err,
+        'findByPlateNumber',
+        this.entityName,
+      );
     }
   }
 
@@ -100,14 +104,22 @@ export class VehicleRepository extends Repository<Vehicle> {
 
       return await qb.getManyAndCount();
     } catch (err) {
-      handleRepositoryError(this.logger, err, 'findAllPaginated', this.entityName);      
+      handleRepositoryError(
+        this.logger,
+        err,
+        'findAllPaginated',
+        this.entityName,
+      );
     }
   }
 
   /**
    * Aplica los filtros del DTO al QueryBuilder.
    */
-  private applyFilters(qb: SelectQueryBuilder<Vehicle>, filters: VehicleFilterDto): void {
+  private applyFilters(
+    qb: SelectQueryBuilder<Vehicle>,
+    filters: VehicleFilterDto,
+  ): void {
     if (!filters) return;
 
     if (filters.driverId) {
@@ -128,7 +140,9 @@ export class VehicleRepository extends Repository<Vehicle> {
     }
 
     if (filters.plateNumber) {
-      qb.andWhere('vehicle.plate_number ILIKE :plate', { plate: `%${filters.plateNumber}%` });
+      qb.andWhere('vehicle.plate_number ILIKE :plate', {
+        plate: `%${filters.plateNumber}%`,
+      });
     }
 
     if (filters.status) {
@@ -136,7 +150,9 @@ export class VehicleRepository extends Repository<Vehicle> {
     }
 
     if (filters.isActive !== undefined) {
-      qb.andWhere('vehicle.isActive = :isActive', { isActive: filters.isActive });
+      qb.andWhere('vehicle.isActive = :isActive', {
+        isActive: filters.isActive,
+      });
     }
 
     if (filters.minYear !== undefined) {
@@ -148,11 +164,15 @@ export class VehicleRepository extends Repository<Vehicle> {
     }
 
     if (filters.minCapacity !== undefined) {
-      qb.andWhere('vehicle.capacity >= :minCapacity', { minCapacity: filters.minCapacity });
+      qb.andWhere('vehicle.capacity >= :minCapacity', {
+        minCapacity: filters.minCapacity,
+      });
     }
 
     if (filters.maxCapacity !== undefined) {
-      qb.andWhere('vehicle.capacity <= :maxCapacity', { maxCapacity: filters.maxCapacity });
+      qb.andWhere('vehicle.capacity <= :maxCapacity', {
+        maxCapacity: filters.maxCapacity,
+      });
     }
   }
 
@@ -163,7 +183,12 @@ export class VehicleRepository extends Repository<Vehicle> {
     try {
       await this.softDelete(id);
     } catch (err) {
-      handleRepositoryError(this.logger, err, 'softDeleteVehicle', this.entityName);      
+      handleRepositoryError(
+        this.logger,
+        err,
+        'softDeleteVehicle',
+        this.entityName,
+      );
     }
   }
   async findWithRelations(
@@ -172,7 +197,7 @@ export class VehicleRepository extends Repository<Vehicle> {
     options?: Omit<FindOneOptions<Vehicle>, 'relations' | 'where'>,
   ): Promise<Vehicle | null> {
     return this.findOne({
-      where: { id } as any, 
+      where: { id } as any,
       relations,
       ...options,
     });

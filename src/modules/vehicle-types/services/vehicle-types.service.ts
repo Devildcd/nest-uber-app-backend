@@ -62,9 +62,8 @@ export class VehicleTypesService {
       if (dto.serviceClassIds && dto.serviceClassIds.length > 0) {
         // Usamos el operador In para buscar todos los IDs de una vez
         serviceClasses = await queryRunner.manager.find(VehicleServiceClass, {
-        where: { id: In(dto.serviceClassIds) },
-    });
-
+          where: { id: In(dto.serviceClassIds) },
+        });
 
         // Verificamos si encontramos todas las clases de servicio
         if (serviceClasses.length !== dto.serviceClassIds.length) {
@@ -165,7 +164,7 @@ export class VehicleTypesService {
       await queryRunner.release();
     }
   }
-async findAll(
+  async findAll(
     pagination: PaginationDto,
     filters?: VehicleTypeFilterDto,
   ): Promise<ApiResponse<VehicleType[]>> {
@@ -173,7 +172,7 @@ async findAll(
       const [items, total] = await this.repo.findAllPaginated(
         pagination,
         filters,
-    );
+      );
       return formatSuccessResponse<VehicleType[]>(
         'Vehicle type retrieved successfully',
         items,
@@ -240,10 +239,10 @@ async findAll(
       );
     }
   }
-async update(
+  async update(
     id: string,
     dto: UpdateVehicleTypeDto,
-): Promise<ApiResponse<VehicleType>> {
+  ): Promise<ApiResponse<VehicleType>> {
     const queryRunner: QueryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
     await queryRunner.startTransaction();
@@ -266,25 +265,23 @@ async update(
         }
       }
       // 1. Actualizar categoría (si viene en el DTO)
-      if(dto.categoryId){
+      if (dto.categoryId) {
         const category = await this.vehicleCategoryRepository.findById(
-        dto.categoryId,
-      );
-      if (!category) {
-        throw new NotFoundException(`Vehicle ${dto.categoryId} not found`);
+          dto.categoryId,
+        );
+        if (!category) {
+          throw new NotFoundException(`Vehicle ${dto.categoryId} not found`);
+        }
+        existingType.category = category;
       }
-      existingType.category = category;
-      }
-      
-      
+
       // 2. Actualizar clases de servicio (si vienen en el DTO)
       let serviceClasses: VehicleServiceClass[] = [];
       if (dto.serviceClassIds && dto.serviceClassIds.length > 0) {
         // Usamos el operador In para buscar todos los IDs de una vez
         serviceClasses = await queryRunner.manager.find(VehicleServiceClass, {
-        where: { id: In(dto.serviceClassIds) },
-    });
-
+          where: { id: In(dto.serviceClassIds) },
+        });
 
         // Verificamos si encontramos todas las clases de servicio
         if (serviceClasses.length !== dto.serviceClassIds.length) {
@@ -302,17 +299,20 @@ async update(
       // 3. Actualizar otros campos simples
       if (dto.name !== undefined) existingType.name = dto.name;
       if (dto.isActive !== undefined) existingType.isActive = dto.isActive;
-      if (dto.defaultCapacity !== undefined) existingType.defaultCapacity = dto.defaultCapacity;
+      if (dto.defaultCapacity !== undefined)
+        existingType.defaultCapacity = dto.defaultCapacity;
       if (dto.baseFare !== undefined) existingType.baseFare = dto.baseFare;
       if (dto.costPerKm !== undefined) existingType.costPerKm = dto.costPerKm;
-      if (dto.costPerMinute !== undefined) existingType.costPerMinute = dto.costPerMinute;
+      if (dto.costPerMinute !== undefined)
+        existingType.costPerMinute = dto.costPerMinute;
       if (dto.minFare !== undefined) existingType.minFare = dto.minFare;
       if (dto.iconUrl !== undefined) existingType.iconUrl = dto.iconUrl;
-      if (dto.description !== undefined) existingType.description = dto.description;
-      
-    const updated = await queryRunner.manager.save(VehicleType, existingType);  
-    await queryRunner.commitTransaction();
-    return formatSuccessResponse<VehicleType>(
+      if (dto.description !== undefined)
+        existingType.description = dto.description;
+
+      const updated = await queryRunner.manager.save(VehicleType, existingType);
+      await queryRunner.commitTransaction();
+      return formatSuccessResponse<VehicleType>(
         'Vehicle type updated successfully',
         updated,
       );
@@ -325,13 +325,8 @@ async update(
           code?: string;
           detail?: string;
         };
-        if (
-          dbError.code === '23505' &&
-          dbError.detail?.includes('type_name')
-        ) {
-          this.logger.warn(
-            `Name conflict on update: ${dto.name}`,
-          );
+        if (dbError.code === '23505' && dbError.detail?.includes('type_name')) {
+          this.logger.warn(`Name conflict on update: ${dto.name}`);
           return formatErrorResponse<VehicleType>(
             'Vehicle type name conflict',
             'NAME_CONFLICT',

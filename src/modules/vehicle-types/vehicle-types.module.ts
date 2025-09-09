@@ -11,26 +11,42 @@ import { VehicleCategoryRepository } from '../vehicle-category/repositories/vehi
 import { VehicleServiceClassRepository } from '../vehicle-service-classes/repositories/vehicle-service-classes.repository';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([VehicleType,VehicleCategory,VehicleServiceClass,VehicleCategoryRepository,VehicleServiceClassRepository])],
+  imports: [
+    TypeOrmModule.forFeature([
+      VehicleType,
+      VehicleCategory,
+      VehicleServiceClass,
+      VehicleCategoryRepository,
+      VehicleServiceClassRepository,
+    ]),
+  ],
   controllers: [VehicleTypeController],
   providers: [
     VehicleTypesService,
-      {
+    {
       provide: VehicleTypeRepository,
-      useFactory: (dataSource: DataSource) => new VehicleTypeRepository(dataSource),
+      useFactory: (dataSource: DataSource) =>
+        new VehicleTypeRepository(dataSource),
       inject: [DataSource],
     },
     {
       provide: VehicleCategoryRepository,
-      useFactory: (dataSource: DataSource) => new VehicleCategoryRepository(dataSource),
+      useFactory: (dataSource: DataSource) =>
+        new VehicleCategoryRepository(dataSource),
       inject: [DataSource],
     },
     {
       provide: VehicleServiceClassRepository,
-      useFactory: (dataSource: DataSource) => new VehicleServiceClassRepository(dataSource),
+      useFactory: (dataSource: DataSource) =>
+        new VehicleServiceClassRepository(dataSource),
       inject: [DataSource],
     },
-    ],
-    exports: [VehicleTypeRepository, VehicleTypesService, VehicleCategoryRepository, VehicleServiceClassRepository],
+  ],
+  exports: [
+    VehicleTypeRepository,
+    VehicleTypesService,
+    VehicleCategoryRepository,
+    VehicleServiceClassRepository,
+  ],
 })
 export class VehicleTypesModule {}

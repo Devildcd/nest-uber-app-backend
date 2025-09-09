@@ -9,7 +9,7 @@ import { VehicleListItemDto } from './vehicle-list-item.dto';
  * DTO de respuesta para listado paginado de Vehicles
  */
 export class VehicleListResponseDto extends ApiResponseDto<
-VehicleListItemDto[]
+  VehicleListItemDto[]
 > {
   @Expose()
   @Type(() => VehicleListItemDto)

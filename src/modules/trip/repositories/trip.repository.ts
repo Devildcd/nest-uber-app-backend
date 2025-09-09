@@ -10,7 +10,10 @@ import { Trip, TripStatus } from '../entities/trip.entity';
 import { BaseRepository } from 'src/common/repositories/base.repository';
 import { handleRepositoryError } from 'src/common/utils/handle-repository-error';
 import { TripsQueryDto } from '../dto/trips-query.dto';
-import { NearbyParams, TripListItemProjection } from '../interfaces/trip.interfaces';
+import {
+  NearbyParams,
+  TripListItemProjection,
+} from '../interfaces/trip.interfaces';
 
 export interface PaginationDto {
   page?: number;
@@ -164,7 +167,9 @@ export class TripRepository extends BaseRepository<Trip> {
     manager?: EntityManager,
   ): Promise<Trip | null> {
     try {
-      const qb = (manager ? manager.getRepository(Trip) : this).createQueryBuilder('t');
+      const qb = (
+        manager ? manager.getRepository(Trip) : this
+      ).createQueryBuilder('t');
       return await qb
         .setLock('pessimistic_write')
         .where('t.id = :id', { id })
@@ -183,17 +188,23 @@ export class TripRepository extends BaseRepository<Trip> {
 
   /** Aplica filtros del FindTripsQueryDto usando SIEMPRE nombres de columna reales */
   private applyFilters(qb: SelectQueryBuilder<Trip>, f: TripsQueryDto): void {
-    if (f.passengerId)  qb.andWhere('t.passenger_id = :pid', { pid: f.passengerId });
-    if (f.driverId)     qb.andWhere('t.driver_id = :did', { did: f.driverId });
-    if (f.vehicleId)    qb.andWhere('t.vehicle_id = :vid', { vid: f.vehicleId });
-    if (f.status)       qb.andWhere('t.current_status = :st', { st: f.status });
-    if (f.paymentMode)  qb.andWhere('t.payment_mode = :pm', { pm: f.paymentMode });
+    if (f.passengerId)
+      qb.andWhere('t.passenger_id = :pid', { pid: f.passengerId });
+    if (f.driverId) qb.andWhere('t.driver_id = :did', { did: f.driverId });
+    if (f.vehicleId) qb.andWhere('t.vehicle_id = :vid', { vid: f.vehicleId });
+    if (f.status) qb.andWhere('t.current_status = :st', { st: f.status });
+    if (f.paymentMode)
+      qb.andWhere('t.payment_mode = :pm', { pm: f.paymentMode });
 
-    if (f.requestedFrom) qb.andWhere('t.requested_at >= :rf', { rf: f.requestedFrom });
-    if (f.requestedTo)   qb.andWhere('t.requested_at <= :rt', { rt: f.requestedTo });
+    if (f.requestedFrom)
+      qb.andWhere('t.requested_at >= :rf', { rf: f.requestedFrom });
+    if (f.requestedTo)
+      qb.andWhere('t.requested_at <= :rt', { rt: f.requestedTo });
 
-    if (f.completedFrom) qb.andWhere('t.completed_at >= :cf', { cf: f.completedFrom });
-    if (f.completedTo)   qb.andWhere('t.completed_at <= :ct', { ct: f.completedTo });
+    if (f.completedFrom)
+      qb.andWhere('t.completed_at >= :cf', { cf: f.completedFrom });
+    if (f.completedTo)
+      qb.andWhere('t.completed_at <= :ct', { ct: f.completedTo });
   }
 
   /** Conteo total con los mismos filtros (para proyección) */
@@ -203,75 +214,81 @@ export class TripRepository extends BaseRepository<Trip> {
     try {
       return await qb.getCount();
     } catch (err) {
-      handleRepositoryError(this.logger, err, 'countWithFilters', this.entityName);
+      handleRepositoryError(
+        this.logger,
+        err,
+        'countWithFilters',
+        this.entityName,
+      );
     }
   }
 
   /**
- * Busca viajes cuyo pickup esté dentro de un radio (metros) desde (lat,lng),
- * devolviendo ENTIDADES + relaciones (passenger, driver, vehicle),
- * ordenados por cercanía y paginados.
- *
- * Requiere índice espacial:
- *   CREATE INDEX IF NOT EXISTS idx_trips_pickup_point_gist
- *   ON trips USING GIST (pickup_point);
- */
-async findNearbyPickupsEntities(
-  params: NearbyParams,
-  manager?: EntityManager,
-): Promise<[Trip[], number]> {
-  const {
-    lat,
-    lng,
-    radiusMeters,
-    statusIn,
-    page = 1,
-    limit = 10,
-  } = params;
+   * Busca viajes cuyo pickup esté dentro de un radio (metros) desde (lat,lng),
+   * devolviendo ENTIDADES + relaciones (passenger, driver, vehicle),
+   * ordenados por cercanía y paginados.
+   *
+   * Requiere índice espacial:
+   *   CREATE INDEX IF NOT EXISTS idx_trips_pickup_point_gist
+   *   ON trips USING GIST (pickup_point);
+   */
+  async findNearbyPickupsEntities(
+    params: NearbyParams,
+    manager?: EntityManager,
+  ): Promise<[Trip[], number]> {
+    const { lat, lng, radiusMeters, statusIn, page = 1, limit = 10 } = params;
 
-  // saneo del radio (evita scans absurdos)
-  const meters = Math.max(1, Math.min(100_000, Math.floor(radiusMeters || 0))); // 1 m .. 100 km
+    // saneo del radio (evita scans absurdos)
+    const meters = Math.max(
+      1,
+      Math.min(100_000, Math.floor(radiusMeters || 0)),
+    ); // 1 m .. 100 km
 
-  const repo = this.scoped(manager);
-  const qb = repo
-    .createQueryBuilder('t')
-    .leftJoinAndSelect('t.passenger', 'passenger')
-    .leftJoinAndSelect('t.driver', 'driver')
-    .leftJoinAndSelect('t.vehicle', 'vehicle')
-    // .leftJoinAndSelect('t.order', 'order') // ← descomenta si EXISTE esa relación en tu entidad
-    // filtro geoespacial por radio (GEOGRAPHY usa METROS)
-    .where(
-      `ST_DWithin(
+    const repo = this.scoped(manager);
+    const qb = repo
+      .createQueryBuilder('t')
+      .leftJoinAndSelect('t.passenger', 'passenger')
+      .leftJoinAndSelect('t.driver', 'driver')
+      .leftJoinAndSelect('t.vehicle', 'vehicle')
+      // .leftJoinAndSelect('t.order', 'order') // ← descomenta si EXISTE esa relación en tu entidad
+      // filtro geoespacial por radio (GEOGRAPHY usa METROS)
+      .where(
+        `ST_DWithin(
          t.pickup_point,
          ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
          :meters
        )`,
-    )
-    // distancia (metros) para ordenar por cercanía
-    .addSelect(
-      `ST_Distance(
+      )
+      // distancia (metros) para ordenar por cercanía
+      .addSelect(
+        `ST_Distance(
          t.pickup_point,
          ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
        )`,
-      'distanceMeters',
-    )
-    .setParameters({ lat, lng, meters })
-    .orderBy('distanceMeters', 'ASC');
+        'distanceMeters',
+      )
+      .setParameters({ lat, lng, meters })
+      .orderBy('distanceMeters', 'ASC');
 
-  // filtro opcional de estados
-  if (statusIn?.length) {
-    qb.andWhere('t.current_status IN (:...st)', { st: statusIn });
+    // filtro opcional de estados
+    if (statusIn?.length) {
+      qb.andWhere('t.current_status IN (:...st)', { st: statusIn });
+    }
+
+    // paginación estándar de tu BaseRepository
+    this.paginate(qb, page, limit);
+
+    try {
+      // entidades + total con tu wrapper centralizado
+      return await this.getManyAndCountSafe(qb, 'findNearbyPickupsEntities');
+    } catch (err) {
+      handleRepositoryError(
+        this.logger,
+        err,
+        'findNearbyPickupsEntities',
+        this.entityName,
+      );
+      throw err;
+    }
   }
-
-  // paginación estándar de tu BaseRepository
-  this.paginate(qb, page, limit);
-
-  try {
-    // entidades + total con tu wrapper centralizado
-    return await this.getManyAndCountSafe(qb, 'findNearbyPickupsEntities');
-  } catch (err) {
-    handleRepositoryError(this.logger, err, 'findNearbyPickupsEntities', this.entityName);
-    throw err;
-  }
-}
 }

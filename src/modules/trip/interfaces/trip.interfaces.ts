@@ -1,4 +1,4 @@
-import { PaymentMode, TripStatus } from "../entities/trip.entity";
+import { PaymentMode, TripStatus } from '../entities/trip.entity';
 
 export interface FareBreakdown {
   base_fare?: number;
@@ -9,7 +9,6 @@ export interface FareBreakdown {
   waiting_time_minutes?: number;
   // agrega campos internos si necesitas
 }
-
 
 /** Proyección ligera para listados (mejor performance que cargar relaciones) */
 
@@ -27,9 +26,9 @@ export interface TripListItemProjection {
 }
 
 export interface NearbyParams {
-  lat: number;           // -90..90
-  lng: number;           // -180..180
-  radiusMeters: number;  // radio en METROS
+  lat: number; // -90..90
+  lng: number; // -180..180
+  radiusMeters: number; // radio en METROS
   statusIn?: TripStatus[];
   page?: number;
   limit?: number;
