@@ -100,10 +100,6 @@ export class VehicleController {
       `Fetching vehicle type — page ${pagination.page}, limit ${pagination.limit}`,
     );
     const apiResponse = await this.vehiclesService.findAll(pagination, filters);
-    this.logger.debug(
-      'Vehicles fetched:',
-      JSON.stringify(apiResponse, null, 2),
-    );
     return plainToInstance(VehicleListResponseDto, apiResponse, {
       excludeExtraneousValues: true,
     });
