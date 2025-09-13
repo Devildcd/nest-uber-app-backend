@@ -86,7 +86,7 @@ export class Transaction {
   })
   netAmount: number;
 
-  @Column({ type: 'varchar', length: 3, default: 'USD' })
+  @Column({ type: 'varchar', length: 3, default: 'CUP' })
   currency: string;
 
   @Column({
