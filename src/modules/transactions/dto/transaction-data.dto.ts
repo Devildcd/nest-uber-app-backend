@@ -1,6 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Expose } from 'class-transformer';
-import { TransactionStatus, TransactionType } from '../entities/transaction.entity';
+import {
+  TransactionStatus,
+  TransactionType,
+} from '../entities/transaction.entity';
 
 export class TransactionDataDto {
   @ApiProperty({

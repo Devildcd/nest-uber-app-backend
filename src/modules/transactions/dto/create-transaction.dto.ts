@@ -10,7 +10,10 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { TransactionType, TransactionStatus } from '../entities/transaction.entity';
+import {
+  TransactionType,
+  TransactionStatus,
+} from '../entities/transaction.entity';
 
 export class CreateTransactionDto {
   @ApiProperty({
@@ -116,10 +119,15 @@ export class CreateTransactionDto {
   @ApiPropertyOptional({
     description: 'Metadatos libres (respuesta de pasarela, logs, etc.)',
     type: Object,
-    example: { gateway: 'stripe', intentId: 'pi_123456', raw: { /* ... */ } },
+    example: {
+      gateway: 'stripe',
+      intentId: 'pi_123456',
+      raw: {
+        /* ... */
+      },
+    },
   })
   @IsOptional()
   @IsObject()
   metadata?: Record<string, any>;
 }
-

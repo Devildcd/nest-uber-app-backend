@@ -8,21 +8,12 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   DeleteDateColumn,
+  Check,
 } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 
 export enum BackgroundCheckStatus {
-  PENDING = 'pending',
-  APPROVED = 'approved',
-  REJECTED = 'rejected',
-  RE_CHECK_REQUIRED = 're_check_required',
-}
-
-export enum OnboardingStatus {
-  REGISTERED = 'registered',
-  DOCUMENTS_UPLOADED = 'documents_uploaded',
-  BACKGROUND_CHECK_DONE = 'background_check_done',
-  TRAINING_COMPLETED = 'training_completed',
+  PENDING_BACKGROUND_CHECK = 'pending_background_check',
   APPROVED = 'approved',
   REJECTED = 'rejected',
 }
@@ -41,6 +32,12 @@ export enum DriverStatus {
 @Index(['backgroundCheckStatus'])
 @Index(['isApproved'])
 @Index(['driverStatus'])
+// Invariantes de negocio reforzadas en DB:
+@Check(`("driver_status" <> 'deactivated') OR ("is_approved" = false)`)
+@Check(
+  `("background_check_status" <> 'rejected') OR ("is_approved" = false AND "driver_status" = 'suspended')`,
+)
+@Check(`("driver_status" <> 'active') OR ("is_approved" = true)`)
 export class DriverProfile {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -62,7 +59,7 @@ export class DriverProfile {
     name: 'background_check_status',
     type: 'enum',
     enum: BackgroundCheckStatus,
-    default: BackgroundCheckStatus.PENDING,
+    default: BackgroundCheckStatus.PENDING_BACKGROUND_CHECK, // ✅
   })
   backgroundCheckStatus: BackgroundCheckStatus;
 
@@ -75,14 +72,6 @@ export class DriverProfile {
 
   @Column({ name: 'is_approved', default: false })
   isApproved: boolean;
-
-  @Column({
-    name: 'onboarding_status',
-    type: 'enum',
-    enum: OnboardingStatus,
-    default: OnboardingStatus.REGISTERED,
-  })
-  onboardingStatus: OnboardingStatus;
 
   @Column({ type: 'json', nullable: true })
   emergencyContactInfo?: {

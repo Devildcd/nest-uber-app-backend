@@ -4,11 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  DataSource,
-  QueryFailedError,
-  QueryRunner,
-} from 'typeorm';
+import { DataSource, QueryFailedError, QueryRunner } from 'typeorm';
 
 import { Transaction } from '../entities/transaction.entity';
 import { TransactionRepository } from '../repositories/transactions.repository';
@@ -22,14 +18,11 @@ import {
   formatSuccessResponse,
   handleServiceError,
 } from 'src/common/utils/api-response.utils';
-
 import { TransactionListItemDto } from '../dto/transaction-list-item.dto';
 import { TransactionDataDto } from '../dto/transaction-data.dto';
-
 import { Order } from '../../orders/entities/order.entity';
 import { Trip } from '../../trip/entities/trip.entity';
 import { User } from '../../user/entities/user.entity';
-import { TripRepository } from 'src/modules/trip/repositories/trip.repository';
 import { TransactionDetailDto } from '../dto/transaction-detail.dto';
 
 @Injectable()
@@ -38,7 +31,6 @@ export class TransactionsService {
 
   constructor(
     private readonly repo: TransactionRepository,
-    private readonly tripRepository: TripRepository,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -60,23 +52,34 @@ export class TransactionsService {
       let toUser: User | null = null;
 
       if (dto.orderId) {
-        order = await queryRunner.manager.findOne(Order, { where: { id: dto.orderId } });
-        if (!order) throw new NotFoundException(`Order ${dto.orderId} not found`);
+        order = await queryRunner.manager.findOne(Order, {
+          where: { id: dto.orderId },
+        });
+        if (!order)
+          throw new NotFoundException(`Order ${dto.orderId} not found`);
       }
 
       if (dto.tripId) {
-        trip = await queryRunner.manager.findOne(Trip, { where: { id: dto.tripId } });
+        trip = await queryRunner.manager.findOne(Trip, {
+          where: { id: dto.tripId },
+        });
         if (!trip) throw new NotFoundException(`Trip ${dto.tripId} not found`);
       }
 
       if (dto.fromUserId) {
-        fromUser = await queryRunner.manager.findOne(User, { where: { id: dto.fromUserId } });
-        if (!fromUser) throw new NotFoundException(`From user ${dto.fromUserId} not found`);
+        fromUser = await queryRunner.manager.findOne(User, {
+          where: { id: dto.fromUserId },
+        });
+        if (!fromUser)
+          throw new NotFoundException(`From user ${dto.fromUserId} not found`);
       }
 
       if (dto.toUserId) {
-        toUser = await queryRunner.manager.findOne(User, { where: { id: dto.toUserId } });
-        if (!toUser) throw new NotFoundException(`To user ${dto.toUserId} not found`);
+        toUser = await queryRunner.manager.findOne(User, {
+          where: { id: dto.toUserId },
+        });
+        if (!toUser)
+          throw new NotFoundException(`To user ${dto.toUserId} not found`);
       }
 
       const partial: Partial<Transaction> = {
@@ -95,7 +98,10 @@ export class TransactionsService {
         toUser: toUser ?? undefined,
       };
 
-      const created = await this.repo.createAndSave(partial, queryRunner.manager);
+      const created = await this.repo.createAndSave(
+        partial,
+        queryRunner.manager,
+      );
 
       await queryRunner.commitTransaction();
 
@@ -156,7 +162,10 @@ export class TransactionsService {
     filters?: TransactionFiltersDto,
   ): Promise<ApiResponse<TransactionListItemDto[]>> {
     try {
-      const [items, total] = await this.repo.findAllPaginated(pagination, filters);
+      const [items, total] = await this.repo.findAllPaginated(
+        pagination,
+        filters,
+      );
 
       const mapped = (items ?? []).map((t) => this.toListItemDto(t));
 
@@ -166,7 +175,10 @@ export class TransactionsService {
         { total, page: pagination.page ?? 1, limit: pagination.limit ?? 20 },
       );
     } catch (error: any) {
-      this.logger.error('findAll failed', error instanceof Error ? error.stack : String(error));
+      this.logger.error(
+        'findAll failed',
+        error instanceof Error ? error.stack : String(error),
+      );
       return formatErrorResponse<TransactionListItemDto[]>(
         'Error fetching transactions',
         'FIND_ALL_ERROR',
@@ -182,14 +194,20 @@ export class TransactionsService {
     try {
       const tx = await this.repo.findById(id);
       if (!tx) {
-        return formatErrorResponse<TransactionDetailDto>('Transaction not found', 'NOT_FOUND');
+        return formatErrorResponse<TransactionDetailDto>(
+          'Transaction not found',
+          'NOT_FOUND',
+        );
       }
       return formatSuccessResponse<TransactionDetailDto>(
         'Transaction retrieved successfully',
         this.toDetailDto(tx),
       );
     } catch (error: any) {
-      this.logger.error('findById failed', error instanceof Error ? error.stack : String(error));
+      this.logger.error(
+        'findById failed',
+        error instanceof Error ? error.stack : String(error),
+      );
       return formatErrorResponse<TransactionDetailDto>(
         'Error fetching transaction',
         'FIND_BY_ID_ERROR',
@@ -210,14 +228,22 @@ export class TransactionsService {
     await queryRunner.startTransaction();
 
     try {
-      const existing = await this.repo.findWithRelations(id, ['fromUser', 'toUser', 'order', 'trip'], undefined, queryRunner.manager);
+      const existing = await this.repo.findWithRelations(
+        id,
+        ['fromUser', 'toUser', 'order', 'trip'],
+        undefined,
+        queryRunner.manager,
+      );
       if (!existing) throw new NotFoundException(`Transaction ${id} not found`);
 
       // If DTO contains relation ids, validate and set
       if ((dto as any).orderId !== undefined) {
         if (dto.orderId) {
-          const order = await queryRunner.manager.findOne(Order, { where: { id: dto.orderId } });
-          if (!order) throw new NotFoundException(`Order ${dto.orderId} not found`);
+          const order = await queryRunner.manager.findOne(Order, {
+            where: { id: dto.orderId },
+          });
+          if (!order)
+            throw new NotFoundException(`Order ${dto.orderId} not found`);
           existing.order = order;
         } else {
           existing.order = null;
@@ -226,8 +252,11 @@ export class TransactionsService {
 
       if ((dto as any).tripId !== undefined) {
         if (dto.tripId) {
-          const trip = await queryRunner.manager.findOne(Trip, { where: { id: dto.tripId } });
-          if (!trip) throw new NotFoundException(`Trip ${dto.tripId} not found`);
+          const trip = await queryRunner.manager.findOne(Trip, {
+            where: { id: dto.tripId },
+          });
+          if (!trip)
+            throw new NotFoundException(`Trip ${dto.tripId} not found`);
           existing.trip = trip;
         } else {
           existing.trip = null;
@@ -236,8 +265,13 @@ export class TransactionsService {
 
       if ((dto as any).fromUserId !== undefined) {
         if (dto.fromUserId) {
-          const fu = await queryRunner.manager.findOne(User, { where: { id: dto.fromUserId } });
-          if (!fu) throw new NotFoundException(`From user ${dto.fromUserId} not found`);
+          const fu = await queryRunner.manager.findOne(User, {
+            where: { id: dto.fromUserId },
+          });
+          if (!fu)
+            throw new NotFoundException(
+              `From user ${dto.fromUserId} not found`,
+            );
           existing.fromUser = fu;
         } else {
           existing.fromUser = null;
@@ -246,8 +280,11 @@ export class TransactionsService {
 
       if ((dto as any).toUserId !== undefined) {
         if (dto.toUserId) {
-          const tu = await queryRunner.manager.findOne(User, { where: { id: dto.toUserId } });
-          if (!tu) throw new NotFoundException(`To user ${dto.toUserId} not found`);
+          const tu = await queryRunner.manager.findOne(User, {
+            where: { id: dto.toUserId },
+          });
+          if (!tu)
+            throw new NotFoundException(`To user ${dto.toUserId} not found`);
           existing.toUser = tu;
         } else {
           existing.toUser = null;
@@ -257,11 +294,15 @@ export class TransactionsService {
       // Update scalar fields explicitly (avoid blind Object.assign)
       if (dto.type !== undefined) existing.type = dto.type;
       if (dto.grossAmount !== undefined) existing.grossAmount = dto.grossAmount;
-      if (dto.platformFeeAmount !== undefined) existing.platformFeeAmount = dto.platformFeeAmount;
+      if (dto.platformFeeAmount !== undefined)
+        existing.platformFeeAmount = dto.platformFeeAmount;
       if (dto.netAmount !== undefined) existing.netAmount = dto.netAmount;
       if (dto.currency !== undefined) existing.currency = dto.currency;
       if (dto.status !== undefined) existing.status = dto.status;
-      if (dto.processedAt !== undefined) existing.processedAt = dto.processedAt ? new Date(dto.processedAt) : undefined;
+      if (dto.processedAt !== undefined)
+        existing.processedAt = dto.processedAt
+          ? new Date(dto.processedAt)
+          : undefined;
       if (dto.description !== undefined) existing.description = dto.description;
       if (dto.metadata !== undefined) existing.metadata = dto.metadata;
 
@@ -287,7 +328,10 @@ export class TransactionsService {
       }
 
       if (error instanceof NotFoundException) {
-        return formatErrorResponse<TransactionDetailDto>(error.message, 'NOT_FOUND');
+        return formatErrorResponse<TransactionDetailDto>(
+          error.message,
+          'NOT_FOUND',
+        );
       }
 
       const err = error as Error;
@@ -307,16 +351,30 @@ export class TransactionsService {
   async remove(id: string): Promise<ApiResponse<null>> {
     try {
       await this.repo.softDeleteTransaction(id);
-      return formatSuccessResponse<null>('Transaction deleted successfully', null);
+      return formatSuccessResponse<null>(
+        'Transaction deleted successfully',
+        null,
+      );
     } catch (err: any) {
-      this.logger.error('remove failed', err instanceof Error ? err.stack : String(err));
+      this.logger.error(
+        'remove failed',
+        err instanceof Error ? err.stack : String(err),
+      );
 
       if (err instanceof QueryFailedError) {
         const pgErr = err.driverError as { code?: string; detail?: string };
-        return formatErrorResponse<null>('Database error deleting transaction', pgErr.code, pgErr.detail);
+        return formatErrorResponse<null>(
+          'Database error deleting transaction',
+          pgErr.code,
+          pgErr.detail,
+        );
       }
 
-      return formatErrorResponse<null>('Error deleting transaction', err instanceof Error ? err.message : 'DELETE_ERROR', err);
+      return formatErrorResponse<null>(
+        'Error deleting transaction',
+        err instanceof Error ? err.message : 'DELETE_ERROR',
+        err,
+      );
     }
   }
 
@@ -379,5 +437,4 @@ export class TransactionsService {
       updatedAt: tx.updatedAt ? tx.createdAt.toISOString() : undefined,
     } as TransactionDataDto;
   }
-
 }

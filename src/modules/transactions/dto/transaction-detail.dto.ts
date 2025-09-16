@@ -1,6 +1,9 @@
 // src/modules/transactions/dto/transaction-detail.dto.ts
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { TransactionType, TransactionStatus } from '../entities/transaction.entity';
+import {
+  TransactionType,
+  TransactionStatus,
+} from '../entities/transaction.entity';
 import { Expose } from 'class-transformer';
 
 export class TransactionDetailDto {

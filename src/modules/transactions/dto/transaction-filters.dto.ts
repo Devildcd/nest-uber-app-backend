@@ -1,8 +1,18 @@
 // src/modules/transactions/dto/transaction-filters.dto.ts
-import { IsOptional, IsEnum, IsUUID, IsString, IsDateString, IsNumber } from 'class-validator';
+import {
+  IsOptional,
+  IsEnum,
+  IsUUID,
+  IsString,
+  IsDateString,
+  IsNumber,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { TransactionType, TransactionStatus } from '../entities/transaction.entity';
+import {
+  TransactionType,
+  TransactionStatus,
+} from '../entities/transaction.entity';
 
 export class TransactionFiltersDto {
   @ApiPropertyOptional({

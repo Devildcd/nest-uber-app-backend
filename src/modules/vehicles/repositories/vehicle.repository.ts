@@ -1,14 +1,13 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import {
   DataSource,
   DeepPartial,
   EntityManager,
   FindOneOptions,
-  ILike,
   Repository,
   SelectQueryBuilder,
 } from 'typeorm';
-import { Vehicle } from '../entities/vehicle.entity';
+import { Vehicle, VehicleStatus } from '../entities/vehicle.entity';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 import { VehicleFilterDto } from '../dto/vehicle-filter.dto';
 import { handleRepositoryError } from '../../../common/utils/handle-repository-error';
@@ -76,6 +75,38 @@ export class VehicleRepository extends Repository<Vehicle> {
         this.entityName,
       );
     }
+  }
+
+  // Funcionalidad para cambiar el estado del vehiculo
+  // Garantiza exclusividad de 'in_service' por driver.
+  // - Degrada cualquier otro vehículo del mismo driver que esté 'in_service' → 'unavailable'
+  // - Promueve el elegido a 'in_service'
+  // Debe ejecutarse dentro de una TX (usa el EntityManager recibido).
+  async setInServiceExclusive(
+    driverId: string,
+    nextVehicleId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    const repo = manager.getRepository(Vehicle);
+
+    // 1) Degradar los que hoy están in_service (excepto el elegido)
+    await repo
+      .createQueryBuilder()
+      .update(Vehicle)
+      .set({ status: VehicleStatus.UNAVAILABLE })
+      .where('driver_id = :driverId', { driverId })
+      .andWhere('status = :inService', { inService: VehicleStatus.IN_SERVICE })
+      .andWhere('id <> :vid', { vid: nextVehicleId })
+      .execute();
+
+    // 2) Promover el elegido a in_service
+    await repo
+      .createQueryBuilder()
+      .update(Vehicle)
+      .set({ status: VehicleStatus.IN_SERVICE })
+      .where('id = :vid', { vid: nextVehicleId })
+      .andWhere('driver_id = :driverId', { driverId })
+      .execute();
   }
 
   /**

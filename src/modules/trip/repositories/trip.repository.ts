@@ -20,6 +20,11 @@ export interface PaginationDto {
   limit?: number;
 }
 
+// (Opcional) tipa las relaciones válidas de forma segura
+export const TRIP_RELATIONS = ['passenger', 'driver', 'vehicle'] as const;
+// si tienes la relación a la orden, agrégala: 'order'
+export type TripRelation = (typeof TRIP_RELATIONS)[number];
+
 @Injectable()
 export class TripRepository extends BaseRepository<Trip> {
   constructor(dataSource: DataSource) {
@@ -37,40 +42,32 @@ export class TripRepository extends BaseRepository<Trip> {
       return await repo.save(entity);
     } catch (err) {
       handleRepositoryError(this.logger, err, 'createAndSave', this.entityName);
+      throw err;
     }
   }
 
-  /** Obtener por id (opcionalmente con relaciones) */
+  /** Obtener por id con cero/una/varias relaciones (flexible) */
   async findById(
     id: string,
-    opts: { relations?: boolean } = { relations: true },
+    relations: TripRelation[] = [], // p.ej. [], ['passenger'], ['passenger','driver']
+    manager?: EntityManager, // por si lo necesitas dentro de una tx
   ): Promise<Trip | null> {
-    const qb = this.qb('t').where('t.id = :id', { id });
-
-    if (opts.relations) {
-      qb.leftJoinAndSelect('t.passenger', 'passenger')
-        .leftJoinAndSelect('t.driver', 'driver')
-        .leftJoinAndSelect('t.vehicle', 'vehicle')
-        .leftJoinAndSelect('t.order', 'order');
-    }
-
-    return this.getOneSafe(qb, 'findById');
+    return this.findWithRelations(id, relations, undefined, manager);
   }
 
-  /** Listado paginado con ENTIDADES (carga relaciones) */
+  /** Listado paginado con ENTIDADES (carga relaciones básicas) */
   async findAllPaginated(
     pagination: PaginationDto,
     filters?: TripsQueryDto,
   ): Promise<[Trip[], number]> {
     const { page = 1, limit = 10 } = pagination;
 
-    // Nota: aunque cargamos entidades, usamos nombres de columna para where/order
     const qb = this.qb('t')
       .leftJoinAndSelect('t.passenger', 'passenger')
       .leftJoinAndSelect('t.driver', 'driver')
       .leftJoinAndSelect('t.vehicle', 'vehicle')
-      .leftJoinAndSelect('t.order', 'order')
-      .orderBy('t.requested_at', 'DESC');
+      // .leftJoinAndSelect('t.order', 'order') // solo si EXISTE la relación
+      .orderBy('t.requestedAt', 'DESC');
 
     if (filters) this.applyFilters(qb, filters);
     this.paginate(qb, page, limit);
@@ -78,10 +75,7 @@ export class TripRepository extends BaseRepository<Trip> {
     return this.getManyAndCountSafe(qb, 'findAllPaginated');
   }
 
-  /**
-   * Listado paginado en PROYECCIÓN (sin relaciones) — recomendado para “listas”
-   * Devuelve objetos planos con lo necesario; muy performante.
-   */
+  /** Listado paginado en PROYECCIÓN (sin relaciones) — recomendado para “listas” */
   async findListPaginatedProjection(
     pagination: PaginationDto,
     filters?: TripsQueryDto,
@@ -119,10 +113,11 @@ export class TripRepository extends BaseRepository<Trip> {
         'findListPaginatedProjection',
         this.entityName,
       );
+      throw err;
     }
   }
 
-  /** Update parcial, devuelve entidad actualizada (participa en transacción si pasas manager) */
+  /** Update parcial y recarga con relaciones usando el helper flexible */
   async updatePartial(
     id: string,
     patch: DeepPartial<Trip>,
@@ -131,17 +126,26 @@ export class TripRepository extends BaseRepository<Trip> {
     const repo = this.scoped(manager);
     try {
       await repo.update({ id } as any, patch);
-      const updated = await repo.findOne({
-        where: { id } as any,
-        relations: { passenger: true, driver: true, vehicle: true },
-      });
-      return updated!;
+
+      // 🔽 recarga con las relaciones que te interesen (ajusta la lista)
+      const updated = await this.findWithRelations(
+        id,
+        ['passenger', 'driver', 'vehicle'], // agrega 'order' si EXISTE en tu entidad
+        undefined,
+        manager,
+      );
+
+      if (!updated) {
+        throw new Error(`Trip ${id} not found after update`);
+      }
+      return updated;
     } catch (err) {
       handleRepositoryError(this.logger, err, 'updatePartial', this.entityName);
+      throw err;
     }
   }
 
-  /** Viaje activo por pasajero (pending/assigning/accepted/arriving/in_progress) */
+  /** Viaje activo por pasajero */
   async findActiveByPassenger(passengerId: string): Promise<Trip | null> {
     const active: TripStatus[] = [
       TripStatus.PENDING,
@@ -155,7 +159,7 @@ export class TripRepository extends BaseRepository<Trip> {
       .leftJoinAndSelect('t.vehicle', 'vehicle')
       .where('t.passenger_id = :pid', { pid: passengerId })
       .andWhere('t.current_status IN (:...st)', { st: active })
-      .orderBy('t.requested_at', 'DESC')
+      .orderBy('t.requestedAt', 'DESC')
       .limit(1);
 
     return this.getOneSafe(qb, 'findActiveByPassenger');
@@ -181,12 +185,12 @@ export class TripRepository extends BaseRepository<Trip> {
         'findByIdForUpdate',
         this.entityName,
       );
+      throw err;
     }
   }
 
   // ----------------- Helpers privados -----------------
 
-  /** Aplica filtros del FindTripsQueryDto usando SIEMPRE nombres de columna reales */
   private applyFilters(qb: SelectQueryBuilder<Trip>, f: TripsQueryDto): void {
     if (f.passengerId)
       qb.andWhere('t.passenger_id = :pid', { pid: f.passengerId });
@@ -207,7 +211,6 @@ export class TripRepository extends BaseRepository<Trip> {
       qb.andWhere('t.completed_at <= :ct', { ct: f.completedTo });
   }
 
-  /** Conteo total con los mismos filtros (para proyección) */
   private async countWithFilters(filters?: TripsQueryDto): Promise<number> {
     const qb = this.qb('t').select('t.id');
     if (filters) this.applyFilters(qb, filters);
@@ -220,6 +223,7 @@ export class TripRepository extends BaseRepository<Trip> {
         'countWithFilters',
         this.entityName,
       );
+      throw err;
     }
   }
 

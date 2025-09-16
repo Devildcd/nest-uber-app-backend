@@ -60,10 +60,13 @@ export class TransactionsController {
     @Query() filters?: TransactionFiltersDto,
   ): Promise<ApiResponseInterface<TransactionListItemDto[]>> {
     this.logger.log('Listing transactions', { pagination, filters });
-    const apiResponse = await this.transactionsService.findAll(pagination, filters);
+    const apiResponse = await this.transactionsService.findAll(
+      pagination,
+      filters,
+    );
     return plainToInstance(TransactionListResponseDto, apiResponse, {
-          excludeExtraneousValues: true,
-        });
+      excludeExtraneousValues: true,
+    });
   }
 
   @Public()
@@ -104,7 +107,10 @@ export class TransactionsController {
   @Public()
   @Patch(':id')
   @ApiOperation({ summary: 'Partially update a transaction' })
-  @ApiOkResponse({ description: 'Transaction updated', type: TransactionDetailDto })
+  @ApiOkResponse({
+    description: 'Transaction updated',
+    type: TransactionDetailDto,
+  })
   @ApiBadRequestResponse({ description: 'Invalid payload or params' })
   @ApiNotFoundResponse({ description: 'Transaction not found' })
   @ApiConflictResponse({ description: 'Conflict (duplicate / business rule)' })
@@ -123,11 +129,8 @@ export class TransactionsController {
   @ApiOkResponse({ description: 'Transaction soft-deleted' })
   @ApiNotFoundResponse({ description: 'Transaction not found' })
   @ApiInternalServerErrorResponse({ description: 'Internal server error' })
-  async remove(
-    @Param('id') id: string,
-  ): Promise<ApiResponseInterface<null>> {
+  async remove(@Param('id') id: string): Promise<ApiResponseInterface<null>> {
     this.logger.log(`Deleting transaction ${id}`);
     return this.transactionsService.remove(id);
   }
 }
-

@@ -2,7 +2,6 @@ import { Expose, Type } from 'class-transformer';
 import {
   BackgroundCheckStatus,
   DriverStatus,
-  OnboardingStatus,
 } from '../entities/driver-profile.entity';
 
 export class UserDto {
@@ -52,9 +51,6 @@ export class DriverProfileDataDto {
 
   @Expose()
   isApproved: boolean;
-
-  @Expose()
-  onboardingStatus: OnboardingStatus;
 
   @Expose()
   @Type(() => EmergencyContactDto)

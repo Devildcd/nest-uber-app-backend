@@ -8,7 +8,7 @@ import {
 } from 'class-validator';
 import {
   BackgroundCheckStatus,
-  OnboardingStatus,
+  DriverStatus,
 } from '../entities/driver-profile.entity';
 
 export class DriverProfileFiltersDto {
@@ -29,7 +29,8 @@ export class DriverProfileFiltersDto {
   @IsBoolean()
   isApproved?: boolean;
 
+  // 👇 nuevo: filtrar por estado operativo del driver
   @IsOptional()
-  @IsEnum(OnboardingStatus)
-  onboardingStatus?: OnboardingStatus;
+  @IsEnum(DriverStatus)
+  driverStatus?: DriverStatus;
 }

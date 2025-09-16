@@ -27,7 +27,10 @@ export class CreateTransactionResponseDto {
 
   @ApiPropertyOptional({
     description: 'Información del error en caso de fallo',
-    example: { code: 'CONFLICT_ERROR', details: 'Duplicate transaction reference' },
+    example: {
+      code: 'CONFLICT_ERROR',
+      details: 'Duplicate transaction reference',
+    },
   })
   @Expose()
   error?: { code?: string; details?: any };
