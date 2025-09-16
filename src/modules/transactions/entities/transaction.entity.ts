@@ -1,6 +1,13 @@
 import {
-  Entity, PrimaryGeneratedColumn, Column, Index, ManyToOne, JoinColumn,
-  CreateDateColumn, UpdateDateColumn, DeleteDateColumn,
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  Index,
+  ManyToOne,
+  JoinColumn,
+  CreateDateColumn,
+  UpdateDateColumn,
+  DeleteDateColumn,
 } from 'typeorm';
 import { Order } from '../../orders/entities/order.entity';
 import { Trip } from '../../trip/entities/trip.entity';
@@ -16,6 +23,7 @@ export enum TransactionType {
   PENALTY = 'penalty',
   REFUND = 'refund',
   PLAN_PURCHASE = 'plan_purchase',
+  PLATFORM_COMMISSION = 'PLATFORM_COMMISSION',
 }
 
 export enum TransactionStatus {
@@ -31,7 +39,7 @@ export class Transaction {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  // Opcional: puede estar ligada a una orden digital
+  // Opcional: puede estar ligada a una orden de pago
   @ManyToOne(() => Order, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'order_id' })
   order?: Order | null;
@@ -86,7 +94,7 @@ export class Transaction {
   })
   netAmount: number;
 
-  @Column({ type: 'varchar', length: 3, default: 'USD' })
+  @Column({ type: 'varchar', length: 3, default: 'CUP' })
   currency: string;
 
   @Column({

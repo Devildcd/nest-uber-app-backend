@@ -1,6 +1,14 @@
 import {
-  Entity, PrimaryGeneratedColumn, Column, Index, ManyToOne, JoinColumn,
-  CreateDateColumn, UpdateDateColumn, DeleteDateColumn, Unique,
+  Entity,
+  PrimaryGeneratedColumn,
+  Column,
+  Index,
+  ManyToOne,
+  JoinColumn,
+  CreateDateColumn,
+  UpdateDateColumn,
+  DeleteDateColumn,
+  Unique,
 } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { Trip } from '../../trip/entities/trip.entity';
@@ -11,6 +19,11 @@ export enum OrderStatus {
   PAID = 'paid',
   FAILED = 'failed',
   REFUNDED = 'refunded',
+}
+export enum PaymentType {
+  CASH = 'cash',
+  CARD = 'card',
+  WALLET = 'wallet',
 }
 
 @Entity({ name: 'orders' })
@@ -29,6 +42,10 @@ export class Order {
   @JoinColumn({ name: 'passenger_id' })
   passenger: User;
 
+  @ManyToOne(() => User, { nullable: false, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'driver_id' })
+  driver: User;
+
   @Column({
     name: 'requested_amount',
     type: 'numeric',
@@ -38,6 +55,9 @@ export class Order {
   })
   requestedAmount: number;
 
+  @Column({ type: 'varchar', length: 3, default: 'CUP' })
+  currency?: string;
+
   @Column({
     type: 'enum',
     enum: OrderStatus,
@@ -46,7 +66,12 @@ export class Order {
   status: OrderStatus;
 
   // Integración pasarela
-  @Column({ name: 'payment_intent_id', type: 'varchar', length: 100, nullable: true })
+  @Column({
+    name: 'payment_intent_id',
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+  })
   paymentIntentId?: string;
 
   @Column({ name: 'payment_gateway_response', type: 'jsonb', nullable: true })
@@ -55,8 +80,27 @@ export class Order {
   @Column({ name: 'payment_method_details', type: 'jsonb', nullable: true })
   paymentMethodDetails?: Record<string, any>;
 
-  @Column({ name: 'failure_reason', type: 'varchar', length: 250, nullable: true })
+  @Column({
+    name: 'failure_reason',
+    type: 'varchar',
+    length: 250,
+    nullable: true,
+  })
   failureReason?: string;
+
+  // Extra fields for cash tracking
+  @Column({ name: 'paid_at', type: 'timestamptz', nullable: true })
+  paidAt?: Date;
+
+  @Column({ name: 'confirmed_by', type: 'uuid', nullable: true })
+  confirmedBy?: string;
+
+  @Column({
+    type: 'enum',
+    enum: PaymentType,
+    default: PaymentType.CASH,
+  })
+  paymentType: PaymentType;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

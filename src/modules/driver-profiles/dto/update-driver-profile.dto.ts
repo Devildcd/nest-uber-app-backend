@@ -14,7 +14,6 @@ import { EmergencyContactDto } from './emergency-contact.dto';
 import {
   BackgroundCheckStatus,
   DriverStatus,
-  OnboardingStatus,
 } from '../entities/driver-profile.entity';
 
 export class UpdateDriverProfileDto {
@@ -70,20 +69,11 @@ export class UpdateDriverProfileDto {
   paidPriorityUntil?: string;
 
   @IsOptional()
-  @IsEnum(OnboardingStatus)
-  @ApiPropertyOptional({
-    description: 'Nuevo estado de onboarding',
-    enum: OnboardingStatus,
-    example: OnboardingStatus.REGISTERED,
-  })
-  onboardingStatus?: OnboardingStatus;
-
-  @IsOptional()
   @IsEnum(BackgroundCheckStatus)
   @ApiPropertyOptional({
     description: 'Nuevo estado de verificación de antecedentes',
     enum: BackgroundCheckStatus,
-    example: BackgroundCheckStatus.PENDING,
+    example: BackgroundCheckStatus.PENDING_BACKGROUND_CHECK,
   })
   backgroundCheckStatus?: BackgroundCheckStatus;
 

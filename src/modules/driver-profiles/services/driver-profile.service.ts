@@ -158,7 +158,6 @@ export class DriverProfileService {
         backgroundCheckStatus: profile.backgroundCheckStatus,
         backgroundCheckDate: profile.backgroundCheckDate?.toISOString(),
         isApproved: profile.isApproved,
-        onboardingStatus: profile.onboardingStatus,
         emergencyContactInfo: profile.emergencyContactInfo,
         driverStatus: profile.driverStatus,
         paidPriorityUntil: profile.paidPriorityUntil?.toISOString(),
@@ -250,8 +249,6 @@ export class DriverProfileService {
         if (dto.paidPriorityUntil !== undefined)
           updates.paidPriorityUntil = new Date(dto.paidPriorityUntil);
 
-        if (dto.onboardingStatus !== undefined)
-          updates.onboardingStatus = dto.onboardingStatus;
         if (dto.backgroundCheckStatus !== undefined)
           updates.backgroundCheckStatus = dto.backgroundCheckStatus;
         if (dto.backgroundCheckDate !== undefined)

@@ -15,9 +15,16 @@ import { VehiclesModule } from './modules/vehicles/vehicles.module';
 import { DriverProfilesModule } from './modules/driver-profiles/driver-profiles.module';
 import { VehicleCategoryModule } from './modules/vehicle-category/vehicle-category.module';
 import { VehicleTypesModule } from './modules/vehicle-types/vehicle-types.module';
-import { VehicleServiceClass } from './modules/vehicle-service-classes/entities/vehicle-service-classes.entity';
 import { Vehicle } from './modules/vehicles/entities/vehicle.entity';
-
+import { TransactionsModule } from './modules/transactions/transactions.module';
+import { OrdersModule } from './modules/orders/orders.module';
+import { DriversAvailabilityModule } from './modules/drivers-availability/drivers-availability.module';
+import { VehicleServiceClass } from './modules/vehicle-service-classes/entities/vehicle-service-classes.entity';
+import { VehicleServiceClassesModule } from './modules/vehicle-service-classes/vehicle-service-classes.module';
+import { DriverBalanceModule } from './modules/driver_balance/driver_balance.module';
+import { WalletMovementsModule } from './modules/wallet-movements/wallet-movements.module';
+import { CashColletionRecordsModule } from './modules/cash_colletion_records/cash_colletion_records.module';
+import { CashColletionsPointsModule } from './modules/cash_colletions_points/cash_colletions_points.module';
 @Module({
   imports: [
     MailModule,
@@ -32,8 +39,14 @@ import { Vehicle } from './modules/vehicles/entities/vehicle.entity';
     VehicleCategoryModule,
     DriverProfilesModule,
     VehicleTypesModule,
-    VehicleServiceClass,
-    Vehicle,
+    TransactionsModule,
+    OrdersModule,
+    DriversAvailabilityModule,
+    VehicleServiceClassesModule,
+    DriverBalanceModule,
+    WalletMovementsModule,
+    CashColletionRecordsModule,
+    CashColletionsPointsModule,
   ],
   controllers: [AppController],
   providers: [AppService, DatabaseConfigService],

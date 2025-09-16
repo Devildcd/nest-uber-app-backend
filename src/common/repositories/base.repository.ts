@@ -2,6 +2,8 @@ import { Logger } from '@nestjs/common';
 import {
   EntityManager,
   EntityTarget,
+  FindOneOptions,
+  FindOptionsRelationByString,
   ObjectLiteral, // 👈 importa esto
   Repository,
   SelectQueryBuilder,
@@ -75,5 +77,29 @@ export abstract class BaseRepository<
     return manager
       ? manager.getRepository<T>(this.metadata.target as EntityTarget<T>)
       : this;
+  }
+
+  async findWithRelations(
+    id: string,
+    relations: FindOptionsRelationByString = [],
+    options?: Omit<FindOneOptions<T>, 'relations' | 'where'>,
+    manager?: EntityManager,
+  ): Promise<T | null> {
+    const repo = this.scoped(manager);
+    try {
+      return await repo.findOne({
+        where: { id } as any,
+        relations,
+        ...options,
+      });
+    } catch (err) {
+      handleRepositoryError(
+        this.logger,
+        err,
+        'findWithRelations',
+        this.entityName,
+      );
+      throw err;
+    }
   }
 }

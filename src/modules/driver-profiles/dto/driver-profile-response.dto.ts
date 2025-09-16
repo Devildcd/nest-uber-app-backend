@@ -3,7 +3,6 @@ import { Expose, Transform, Type } from 'class-transformer';
 import {
   BackgroundCheckStatus,
   DriverStatus,
-  OnboardingStatus,
 } from '../entities/driver-profile.entity';
 import { EmergencyContactDto } from './emergency-contact.dto';
 import { UserDto } from './driver-profile-data.dto';
@@ -55,7 +54,7 @@ export class DriverProfileResponseDto {
   @ApiProperty({
     description: 'Estado de la verificación de antecedentes',
     enum: BackgroundCheckStatus,
-    example: BackgroundCheckStatus.PENDING,
+    example: BackgroundCheckStatus.PENDING_BACKGROUND_CHECK,
   })
   backgroundCheckStatus: BackgroundCheckStatus;
 
@@ -74,14 +73,6 @@ export class DriverProfileResponseDto {
     example: true,
   })
   isApproved: boolean;
-
-  @Expose()
-  @ApiProperty({
-    description: 'Estado del proceso de onboarding',
-    enum: OnboardingStatus,
-    example: OnboardingStatus.REGISTERED,
-  })
-  onboardingStatus: OnboardingStatus;
 
   @Expose()
   @ApiPropertyOptional({

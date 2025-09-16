@@ -13,7 +13,6 @@ import { Type } from 'class-transformer';
 import {
   BackgroundCheckStatus,
   DriverStatus,
-  OnboardingStatus,
 } from '../entities/driver-profile.entity';
 
 export class EmergencyContactDto {
@@ -56,10 +55,6 @@ export class CreateDriverProfileDto {
   @IsOptional()
   @IsBoolean()
   isApproved?: boolean;
-
-  @IsOptional()
-  @IsEnum(OnboardingStatus)
-  onboardingStatus?: OnboardingStatus;
 
   @IsOptional()
   @ValidateNested()

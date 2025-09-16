@@ -8,7 +8,6 @@ import {
   ManyToOne,
   JoinColumn,
   DeleteDateColumn,
-  RelationId,
   ValueTransformer,
 } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
@@ -18,6 +17,7 @@ import { VehicleType } from '../../vehicle-types/entities/vehicle-types.entity';
 export enum VehicleStatus {
   PENDING_REVIEW = 'pending_review',
   APPROVED = 'approved',
+  IN_SERVICE = 'in_service',
   REJECTED = 'rejected',
   MAINTENANCE = 'maintenance',
   UNAVAILABLE = 'unavailable',

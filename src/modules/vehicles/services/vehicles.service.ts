@@ -1,10 +1,17 @@
 import {
   BadRequestException,
+  forwardRef,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, QueryFailedError, QueryRunner } from 'typeorm';
+import {
+  DataSource,
+  EntityManager,
+  QueryFailedError,
+  QueryRunner,
+} from 'typeorm';
 import { ApiResponse } from 'src/common/interfaces/api-response.interface';
 import {
   formatErrorResponse,
@@ -13,10 +20,13 @@ import {
 } from 'src/common/utils/api-response.utils';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 
-import { Vehicle } from '../entities/vehicle.entity';
+import { Vehicle, VehicleStatus } from '../entities/vehicle.entity';
 import { VehicleRepository } from '../repositories/vehicle.repository';
 import { VehicleTypeRepository } from '../../vehicle-types/repositories/vehicle-types.repository';
-import { DriverProfile } from '../../driver-profiles/entities/driver-profile.entity';
+import {
+  DriverProfile,
+  DriverStatus,
+} from '../../driver-profiles/entities/driver-profile.entity';
 
 import { CreateVehicleDto } from '../dto/create-vehicle.dto';
 import { UpdateVehicleDto } from '../dto/update-vehicle.dto';
@@ -25,7 +35,12 @@ import { VehicleListItemDto } from '../dto/vehicle-list-item.dto';
 import { DriverProfileRepository } from 'src/modules/driver-profiles/repositories/driver-profile.repository';
 import { VehicleFilterDto } from '../dto/vehicle-filter.dto';
 import { UserRepository } from '../../user/repositories/user.repository';
-import { VehicleListResponseDto } from '../dto/vehicle-list-item-response.dto';
+import { DriverAvailabilityRepository } from 'src/modules/drivers-availability/repositories/driver-availability.repository';
+import {
+  AvailabilityReason,
+  DriverAvailability,
+} from 'src/modules/drivers-availability/entities/driver-availability.entity';
+import { DriverAvailabilityService } from 'src/modules/drivers-availability/services/driver-availability.service';
 @Injectable()
 export class VehiclesService {
   private readonly logger = new Logger(VehiclesService.name);
@@ -33,9 +48,15 @@ export class VehiclesService {
   constructor(
     private readonly repo: VehicleRepository,
     private readonly vehicleTypeRepository: VehicleTypeRepository,
-    private readonly driverProfileRepository: DriverProfileRepository,
-    private readonly UserRepository: UserRepository,
+    private readonly userRepository: UserRepository,
     private readonly dataSource: DataSource,
+
+    // Repo de availability (exportado por DriversAvailabilityModule)
+    private readonly driverAvailabilityRepo: DriverAvailabilityRepository,
+
+    // Service de availability (cíclico) con forwardRef
+    @Inject(forwardRef(() => DriverAvailabilityService))
+    private readonly driverAvailabilityService: DriverAvailabilityService,
   ) {}
 
   // ------------------------------
@@ -60,7 +81,7 @@ export class VehiclesService {
       }
 
       // Verificar driver
-      const driver = await this.UserRepository.findById(dto.driverId);
+      const driver = await this.userRepository.findById(dto.driverId);
       if (!driver) {
         throw new NotFoundException(`DriverId ${dto.driverId} not found`);
       }
@@ -140,6 +161,51 @@ export class VehiclesService {
     } finally {
       await queryRunner.release();
     }
+  }
+
+  // Funcionalidad para cambiar el estado de un vehiculo atomicamente
+  // Servicio de vehículos / dominio
+  async switchInServiceExclusive(
+    driverId: string,
+    nextVehicleId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    // 1) Pertenencia básica (no validamos docs aquí: el admin ya lo decidió)
+    const next = await this.repo.findById(nextVehicleId);
+    if (!next || next.driver?.id !== driverId) {
+      throw new BadRequestException('Vehicle does not belong to driver');
+    }
+
+    // 2) Exclusividad: deja SOLO ese vehículo en 'in_service'
+    await this.repo.setInServiceExclusive(driverId, nextVehicleId, manager);
+
+    // 3) Sincronizar drivers_availability
+    const da = await this.driverAvailabilityRepo.findByDriverId(
+      driverId,
+      [],
+      manager,
+    );
+    if (!da) return; // si no hay fila aún, nada más que hacer
+
+    const patch: Partial<DriverAvailability> = {
+      currentVehicleId: nextVehicleId,
+    };
+
+    // Si está online y sin trip, recalcular elegibilidad FULL (perfil + wallet + vehículo in_service)
+    if (da.isOnline && !da.currentTripId) {
+      const elig = await this.driverAvailabilityService[
+        'checkOperationalEligibility'
+      ](driverId, nextVehicleId, manager);
+      if (elig.ok) {
+        patch.isAvailableForTrips = true;
+        patch.availabilityReason = null;
+      } else {
+        patch.isAvailableForTrips = false;
+        patch.availabilityReason = AvailabilityReason.UNAVAILABLE;
+      }
+    }
+
+    await this.driverAvailabilityRepo.updatePartial(da.id, patch, manager);
   }
 
   // ------------------------------

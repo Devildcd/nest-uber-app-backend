@@ -13,6 +13,7 @@ import {
 import { User } from 'src/modules/user/entities/user.entity';
 import { Vehicle } from 'src/modules/vehicles/entities/vehicle.entity';
 import { FareBreakdown } from '../interfaces/trip.interfaces';
+import { Order } from 'src/modules/orders/entities/order.entity';
 
 // ---------- ENUMS ----------
 export enum TripStatus {
@@ -71,9 +72,9 @@ export class Trip {
   vehicle?: Vehicle | null;
 
   // Orden de pago digital (opcional)
-  // @ManyToOne(() => Order, { nullable: true, onDelete: 'SET NULL' })
-  // @JoinColumn({ name: 'order_id' })
-  // order?: Order | null;
+  @ManyToOne(() => Order, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'order_id' })
+  order?: Order | null;
 
   @Column({
     name: 'payment_mode',
