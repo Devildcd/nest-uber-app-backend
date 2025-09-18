@@ -134,12 +134,14 @@ export class DriverBalanceService {
   /**
    * F3. Aplica la comisión de un viaje en efectivo (debitando el wallet del driver).
    * - Lock DriverBalance
+   * - Rechaza si wallet.status === 'blocked'
    * - Crea Transaction(platform_commission, tripId)
    * - Crea WalletMovement (amount negativo)
    * - Actualiza currentWalletBalance (y opcionalmente totalEarnedFromTrips)
+   * - Permite la primera operación que deje saldo < 0; después bloquea.
    * Idempotente por (type=platform_commission, tripId, driverId).
    */
-  async applyCashTripCommission(
+async applyCashTripCommission(
     driverId: string,
     dto: ApplyCashCommissionDto,
   ): Promise<{
@@ -160,7 +162,7 @@ export class DriverBalanceService {
 
     try {
       return await this.dataSource.transaction(async (manager) => {
-        // 1) Lock del wallet
+        // 1) Lock del wallet (FOR UPDATE)
         const wallet = await this.repo
           .lockByDriverId(driverId, manager)
           .catch(() => {
@@ -172,6 +174,17 @@ export class DriverBalanceService {
               ),
             );
           });
+
+        // 1.1) Si está bloqueado, rechazamos (no permitimos más débitos)
+        if (wallet.status === 'blocked') {
+          throw new ConflictException(
+            formatErrorResponse(
+              'WALLET_BLOCKED',
+              'La billetera está bloqueada. Se requiere top-up para continuar.',
+              { driverId },
+            ),
+          );
+        }
 
         // 2) Validación de moneda
         const currency = (dto.currency || wallet.currency).toUpperCase();
@@ -185,7 +198,7 @@ export class DriverBalanceService {
           );
         }
 
-        // 3) Transaction idempotente
+        // 3) Transaction idempotente (tu repo ya maneja createPlatformCommission)
         const tx = await this.txRepo.createPlatformCommission(manager, {
           driverId,
           tripId: dto.tripId,
@@ -194,13 +207,12 @@ export class DriverBalanceService {
           description: dto.note ?? 'cash trip commission',
         });
 
-        // 3.1) Si ya existía y ya tenía movimiento, devolvemos idempotente
+        // 3.1) Si ya existía movimiento -> idempotencia
         const existingMv = await manager
           .getRepository(WalletMovement)
           .findOne({ where: { transactionId: tx.id } });
 
         if (existingMv) {
-          // Recargar wallet (balance ya aplicado previamente)
           const freshWallet = await manager
             .getRepository(DriverBalance)
             .findOneOrFail({
@@ -209,7 +221,7 @@ export class DriverBalanceService {
           return { wallet: freshWallet, movement: existingMv, tx };
         }
 
-        // 4) Crear movimiento (amount negativo)
+        // 4) Crear movimiento (amount negativo) y aplicar balance
         const previous = Number(wallet.currentWalletBalance);
         const amount = -_roundTo2(commission);
         const newBalance = _roundTo2(previous + amount);
@@ -224,8 +236,9 @@ export class DriverBalanceService {
         });
         await manager.getRepository(WalletMovement).save(movement);
 
-        // 5) Actualizar saldos del wallet
-        wallet.currentWalletBalance = newBalance;
+        // 5) Actualizar saldos del wallet (wallet está lockeado)
+        // Usamos el helper del repo para mantener consistencia de rounding/lastUpdated
+        await this.repo.updateBalanceLocked(manager, wallet, newBalance);
 
         // (Opcional) KPI: sumar bruto
         if (dto.grossAmount) {
@@ -242,15 +255,24 @@ export class DriverBalanceService {
           wallet.totalEarnedFromTrips = _roundTo2(
             Number(wallet.totalEarnedFromTrips) + _roundTo2(gross),
           );
+          await manager.getRepository(DriverBalance).save(wallet);
         }
 
-        await manager.getRepository(DriverBalance).save(wallet);
+        // 6) Si pasó a negativo y antes era >= 0 -> bloquear (en la misma tx)
+        if (newBalance < 0 && previous >= 0) {
+          await this.repo.blockWalletLocked(
+            manager,
+            wallet,
+            dto.note ?? 'negative_balance_on_commission',
+          );
+          // emit wallet.blocked fuera de la tx (post-commit)
+        }
 
         return { wallet, movement, tx };
       });
     } catch (error) {
       throw handleServiceError(
-        this.logger, // or your logger instance
+        this.logger,
         error,
         `WalletsService.applyCashTripCommission (driverId: ${driverId}, tripId: ${dto.tripId})`,
       );
@@ -333,8 +355,9 @@ export class DriverBalanceService {
   }
 
   /**
-   * Paso 4: Confirmación del CCR => aplica crédito al wallet y completa CCR.
-   * Idempotente: si CCR ya estaba completed y hay movement, devuelve estado actual.
+   * Confirmación del CCR => aplica crédito al wallet y completa CCR.
+   * - Idempotente: si CCR ya completed y movement existe, devuelve estado actual.
+   * - Si wallet estaba blocked y newBalance >= 0 => unblockWalletLocked (se registra unblockedBy desde CCR.collectedByUserId si disponible).
    */
   async confirmCashTopup(
     driverId: string,
@@ -377,7 +400,6 @@ export class DriverBalanceService {
         if (ccr.status === CashCollectionStatus.COMPLETED) {
           const existingMv = await this.movementRepo.findByTransactionId(tx.id);
           if (!existingMv) {
-            // Estado inconsistente: CCR completed sin movimiento; NO aplicar de nuevo, reportar
             throw new BadRequestException(
               formatErrorResponse(
                 'CCR_COMPLETED_NO_MOVEMENT',
@@ -408,15 +430,14 @@ export class DriverBalanceService {
         // Idempotencia extra: si ya hay movement por esta tx, evitar duplicar
         const alreadyMv = await this.movementRepo.findByTransactionId(tx.id);
         if (alreadyMv) {
-          // Completar CCR si aún no lo está, y salir
           if (String(ccr.status) !== String(CashCollectionStatus.COMPLETED)) {
             ccr.status = CashCollectionStatus.COMPLETED;
             await manager.getRepository(CashCollectionRecord).save(ccr);
           }
-          // Asegurar tx PROCESSED
           await this.txRepo.markProcessed(manager, tx.id);
 
-          wallet.currentWalletBalance = newBalance; // opcional: recargar desde DB si aplica
+          // actualizar wallet.balance si fuera necesario (pero no revertir bloqueos)
+          wallet.currentWalletBalance = newBalance;
           await manager.getRepository(DriverBalance).save(wallet);
 
           return {
@@ -439,14 +460,20 @@ export class DriverBalanceService {
         });
         await manager.getRepository(WalletMovement).save(movement);
 
-        // 4.3) Actualizar saldo wallet
-        wallet.currentWalletBalance = newBalance;
-        await manager.getRepository(DriverBalance).save(wallet);
+        // 4.3) Actualizar saldo wallet (usa helper)
+        await this.repo.updateBalanceLocked(manager, wallet, newBalance);
 
         // 4.4) Completar CCR + marcar transacción PROCESSED
         ccr.status = CashCollectionStatus.COMPLETED;
         await manager.getRepository(CashCollectionRecord).save(ccr);
         await this.txRepo.markProcessed(manager, tx.id);
+
+        // 4.5) Si estaba bloqueada y ahora >= 0 => desbloquear (usamos collectedByUserId como performedBy si existe)
+        if (wallet.status === 'blocked' && newBalance >= 0) {
+          const performedBy = ccr.collectedBy.id ?? null;
+          await this.repo.unblockWalletLocked(manager, wallet, performedBy);
+          // Emitir wallet.unblocked post-commit (fuera de la tx)
+        }
 
         return {
           wallet,
@@ -467,11 +494,12 @@ export class DriverBalanceService {
   }
   /**
    * Bloquea el wallet (status='blocked').
+   * Bloqueo manual: usa el método lock + blockLocked para setear blockedAt/blockedReason
    * Efecto de negocio: impedir payouts/egresos; permitir topups y ajustes de regularización.
    */
   async blockDriverWallet(
     driverId: string,
-    _dto: BlockDriverWalletDto,
+    dto: BlockDriverWalletDto,
   ): Promise<{
     driverId: string;
     previousStatus: 'active' | 'blocked';
@@ -481,17 +509,30 @@ export class DriverBalanceService {
   }> {
     try {
       return await this.dataSource.transaction(async (manager) => {
-        const result = await this.repo.setStatusWithLock(
-          manager,
-          driverId,
-          'blocked',
-        );
+        const wallet = await this.repo.lockByDriverId(driverId, manager);
+        const previousStatus = wallet.status;
+        const changedAt = new Date();
+
+        // Si ya blocked -> idempotente
+        if (wallet.status === 'blocked') {
+          return {
+            driverId,
+            previousStatus,
+            status: 'blocked' as const,
+            changed: false,
+            changedAt,
+          };
+        }
+
+        const reason = (dto as any)?.reason ?? 'manual_block';
+        await this.repo.blockWalletLocked(manager, wallet, reason);
+
         return {
           driverId,
-          previousStatus: result.previousStatus,
+          previousStatus,
           status: 'blocked' as const,
-          changed: result.changed,
-          changedAt: result.changedAt,
+          changed: true,
+          changedAt,
         };
       });
     } catch (error) {
@@ -504,11 +545,11 @@ export class DriverBalanceService {
   }
 
   /**
-   * Desbloquea el wallet (status='active').
+   * Desbloqueo manual: registra unblockedAt/unblockedBy si provided
    */
   async unblockDriverWallet(
     driverId: string,
-    _dto: UnblockDriverWalletDto,
+    dto: UnblockDriverWalletDto,
   ): Promise<{
     driverId: string;
     previousStatus: 'active' | 'blocked';
@@ -518,17 +559,29 @@ export class DriverBalanceService {
   }> {
     try {
       return await this.dataSource.transaction(async (manager) => {
-        const result = await this.repo.setStatusWithLock(
-          manager,
-          driverId,
-          'active',
-        );
+        const wallet = await this.repo.lockByDriverId(driverId, manager);
+        const previousStatus = wallet.status;
+        const changedAt = new Date();
+
+        if (wallet.status === 'active') {
+          return {
+            driverId,
+            previousStatus,
+            status: 'active' as const,
+            changed: false,
+            changedAt,
+          };
+        }
+
+        const performedBy = (dto as any)?.performedBy ?? null;
+        await this.repo.unblockWalletLocked(manager, wallet, performedBy);
+
         return {
           driverId,
-          previousStatus: result.previousStatus,
+          previousStatus,
           status: 'active' as const,
-          changed: result.changed,
-          changedAt: result.changedAt,
+          changed: true,
+          changedAt,
         };
       });
     } catch (error) {
