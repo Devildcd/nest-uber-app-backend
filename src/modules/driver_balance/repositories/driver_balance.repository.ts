@@ -127,12 +127,95 @@ export class DriverBalanceRepository extends Repository<DriverBalance> {
       return { wallet, previousStatus, changed: false, changedAt };
     }
 
-    // Transición válida: active<->blocked
-    wallet.status = newStatus;
-    wallet.lastUpdated = changedAt; // mantener traza temporal adicional
-    await manager.getRepository(DriverBalance).save(wallet);
+     // If manual call: for 'blocked' use generic manual reason; for 'active' set unblocked meta as null (no performer)
+    if (newStatus === 'blocked') {
+      // manual block: keep blockedAt if already set, otherwise set now.
+      wallet.status = 'blocked';
+      wallet.blockedAt = wallet.blockedAt ?? changedAt;
+      wallet.blockedReason = wallet.blockedReason ?? 'manual_block';
+      wallet.lastUpdated = changedAt;
+      await manager.getRepository(DriverBalance).save(wallet);
+    } else {
+      // manual active: set unblockedAt/unblockedBy (performedBy unknown here)
+      wallet.status = 'active';
+      wallet.unblockedAt = changedAt;
+      wallet.unblockedBy = null;
+      wallet.blockedReason = null;
+      wallet.lastUpdated = changedAt;
+      await manager.getRepository(DriverBalance).save(wallet);
+    }
 
     return { wallet, previousStatus, changed: true, changedAt };
+  }
+
+  /**
+   * Bloquea una wallet ya obtenida y lockeada (no hace re-lock).
+   * - wallet: entidad previamente obtenida vía lockByDriverId (FOR UPDATE)
+   * - reason: texto que explica por qué (ej.: 'negative_balance_on_commission' o 'manual_block')
+   *
+   * Idempotente: si ya está blocked, actualiza reason solo si overrideReason=true
+   */
+  async blockWalletLocked(
+    manager: EntityManager,
+    wallet: DriverBalance,
+    reason: string,
+    opts?: { overrideReason?: boolean },
+  ): Promise<DriverBalance> {
+    const now = new Date();
+    if (wallet.status === 'blocked') {
+      if (opts?.overrideReason) {
+        wallet.blockedReason = reason;
+        wallet.lastUpdated = now;
+        return await manager.getRepository(DriverBalance).save(wallet);
+      }
+      return wallet;
+    }
+
+    wallet.status = 'blocked';
+    wallet.blockedAt = wallet.blockedAt ?? now;
+    wallet.blockedReason = reason;
+    wallet.lastUpdated = now;
+
+    return await manager.getRepository(DriverBalance).save(wallet);
+  }
+
+  /**
+   * Desbloquea una wallet ya lockeada (no hace re-lock).
+   * - performedBy: uuid del admin/operador que ejecutó el desbloqueo (opcional)
+   *
+   * Idempotente: si ya está active, retorna la wallet sin cambios.
+   */
+  async unblockWalletLocked(
+    manager: EntityManager,
+    wallet: DriverBalance,
+    performedBy?: string | null,
+  ): Promise<DriverBalance> {
+    if (wallet.status === 'active') {
+      return wallet;
+    }
+
+    wallet.status = 'active';
+    wallet.unblockedAt = new Date();
+    wallet.unblockedBy = performedBy ?? null;
+    // optionally keep blockedAt for audit trail; clear blockedReason or keep as historical
+    wallet.blockedReason = null;
+    wallet.lastUpdated = new Date();
+
+    return await manager.getRepository(DriverBalance).save(wallet);
+  }
+
+  /**
+   * Actualiza el balance de una wallet que ya está lockeada (no hace re-lock).
+   * Retorna wallet guardada.
+   */
+  async updateBalanceLocked(
+    manager: EntityManager,
+    wallet: DriverBalance,
+    newBalance: number,
+  ): Promise<DriverBalance> {
+    wallet.currentWalletBalance = Math.round(newBalance * 100) / 100;
+    wallet.lastUpdated = new Date();
+    return await manager.getRepository(DriverBalance).save(wallet);
   }
 
   async isActiveByDriverId(
