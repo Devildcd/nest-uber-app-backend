@@ -1,22 +1,19 @@
 import {
-  IsUUID,
-  IsString,
+  IsBoolean,
+  IsDateString,
+  IsEnum,
   IsInt,
   IsOptional,
-  IsBoolean,
-  IsEnum,
-  IsDateString,
+  IsString,
+  IsUUID,
   MaxLength,
   Min,
 } from 'class-validator';
 import { VehicleStatus } from '../entities/vehicle.entity';
 
-export class CreateVehicleDto {
+export class CreateVehicleOnboardingDto {
   @IsUUID()
   driverId: string;
-
-  @IsUUID()
-  driverProfileId: string;
 
   @IsUUID()
   vehicleTypeId: string;

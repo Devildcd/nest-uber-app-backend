@@ -14,6 +14,7 @@ import {
   BackgroundCheckStatus,
   DriverStatus,
 } from '../entities/driver-profile.entity';
+import { CreateVehicleOnboardingDto } from 'src/modules/vehicles/dto/create-vehicle-onboarding.dto';
 
 export class EmergencyContactDto {
   @IsString()
@@ -68,4 +69,9 @@ export class CreateDriverProfileDto {
   @IsOptional()
   @IsDateString()
   paidPriorityUntil?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => CreateVehicleOnboardingDto)
+  initialVehicle?: CreateVehicleOnboardingDto;
 }

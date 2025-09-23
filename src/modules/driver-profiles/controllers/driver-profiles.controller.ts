@@ -34,6 +34,7 @@ import { DriverProfilesListResponseDto } from '../dto/driver-profile-list-respon
 import { Public } from 'src/modules/auth/decorators/public.decorator';
 import { UpdateDriverProfileDto } from '../dto/update-driver-profile.dto';
 import { DriverProfileResponseWrapperDto } from '../dto/driver-profile-wrapper.dto';
+import { DriverProfileResponseDto } from '../dto/driver-profile-response.dto';
 
 @ApiTags('drivers')
 @Controller('drivers')
@@ -49,16 +50,14 @@ export class DriverProfileController {
   @ApiBody({ type: CreateDriverProfileDto })
   @ApiCreatedResponse({
     description: 'Driver profile created',
-    type: CreateDriverProfileResponseDto,
   })
-  @ApiConflictResponse({ description: 'Driver license number conflict' })
+  @ApiConflictResponse({ description: 'Conflict creating driver profile' })
   async create(
     @Body() dto: CreateDriverProfileDto,
-  ): Promise<CreateDriverProfileResponseDto> {
+  ): Promise<DriverProfileResponseDto> {
+    // <- devuelve plano
     this.logger.log(`Creating driver profile for user: ${dto.userId}`);
-
-    const apiResp = await this.driverProfileService.create(dto);
-    return apiResp;
+    return this.driverProfileService.create(dto);
   }
 
   @Public()

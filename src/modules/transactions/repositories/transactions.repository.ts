@@ -121,6 +121,106 @@ export class TransactionRepository extends Repository<Transaction> {
     return repo.save(tx);
   }
   /**
+   * Devuelve la comisión original (platformFeeAmount) para CARD/WALLET
+   * leyendo el primer CHARGE PROCESSED asociado a la order (ORDER BY created_at ASC LIMIT 1).
+   *
+   * Firma consistente con el resto del repo: recibe `manager` (EntityManager de la tx).
+   */
+  async getOriginalFeeFromCharge(
+    manager: EntityManager,
+    orderId: string,
+  ): Promise<number> {
+    try {
+      const repo = manager.getRepository(Transaction);
+      const qb = repo
+        .createQueryBuilder('t')
+        .where('t.order_id = :orderId', { orderId })
+        .andWhere('t.type = :type', { type: TransactionType.CHARGE })
+        .andWhere('t.status = :status', { status: TransactionStatus.PROCESSED })
+        .orderBy('t.created_at', 'ASC')
+        .limit(1);
+
+      const tx = await qb.getOne();
+      return tx ? Number((tx as any).platformFeeAmount ?? 0) : 0;
+    } catch (err) {
+      handleRepositoryError(
+        this.logger,
+        err,
+        'getOriginalFeeFromCharge',
+        this.entityName,
+      );
+      throw err;
+    }
+  }
+
+  /**
+   * Devuelve la comisión original para CASH consultando la primera COMMISSION_DEDUCTION PROCESSED.
+   * (la comisión en tu modelo está almacenada como grossAmount en ese tipo de tx).
+   */
+  async getOriginalFeeFromCommissionDeduction(
+    manager: EntityManager,
+    orderId: string,
+  ): Promise<number> {
+    try {
+      const repo = manager.getRepository(Transaction);
+      const qb = repo
+        .createQueryBuilder('t')
+        .where('t.order_id = :orderId', { orderId })
+        .andWhere('t.type = :type', {
+          type: TransactionType.COMMISSION_DEDUCTION,
+        })
+        .andWhere('t.status = :status', { status: TransactionStatus.PROCESSED })
+        .orderBy('t.created_at', 'ASC')
+        .limit(1);
+
+      const tx = await qb.getOne();
+      return tx ? Number((tx as any).grossAmount ?? 0) : 0;
+    } catch (err) {
+      handleRepositoryError(
+        this.logger,
+        err,
+        'getOriginalFeeFromCommissionDeduction',
+        this.entityName,
+      );
+      throw err;
+    }
+  }
+
+  /**
+   * Variante RAW SQL para obtener platform_fee_amount rápidamente.
+   * - Útil en paths de solo lectura de alta concurrencia (menor overhead ORM).
+   * - Usa manager.query para ejecutarlo dentro de la transacción/contexto correcto.
+   */
+  async getOriginalFeeFromChargeRaw(
+    manager: EntityManager,
+    orderId: string,
+  ): Promise<number> {
+    try {
+      const rows = await manager.query(
+        `SELECT platform_fee_amount::text AS platform_fee_amount
+         FROM transactions
+         WHERE order_id = $1
+           AND type = $2
+           AND status = $3
+         ORDER BY created_at ASC
+         LIMIT 1`,
+        [orderId, TransactionType.CHARGE, TransactionStatus.PROCESSED],
+      );
+
+      if (!rows || rows.length === 0) return 0;
+      return Number(rows[0].platform_fee_amount ?? 0);
+    } catch (err) {
+      handleRepositoryError(
+        this.logger,
+        err,
+        'getOriginalFeeFromChargeRaw',
+        this.entityName,
+      );
+      throw err;
+    }
+  }
+
+  /**
    * Crea y persiste una entidad Transaction. Si se provee manager, lo usa (útil en transacciones).
    */
   async createAndSave(
@@ -434,5 +534,228 @@ export class TransactionRepository extends Repository<Transaction> {
         { id: txId },
         { status: TransactionStatus.PROCESSED, processedAt: new Date() },
       );
+  }
+
+  /**
+   * Busca si ya existe una transacción REFUND para una order (idempotencia).
+   */
+  async findRefundByOrderId(
+    manager: EntityManager,
+    orderId: string,
+  ): Promise<Transaction | null> {
+    return manager.getRepository(Transaction).findOne({
+      where: { type: TransactionType.REFUND, order: { id: orderId } as any },
+      relations: ['order'],
+    });
+  }
+
+  /**
+   * Find a PLATFORM_COMMISSION transaction related to an order.
+   *
+   * Strategy:
+   * 1) Try to find a PLATFORM_COMMISSION where order.id = orderId.
+   * 2) If not found, load the order to obtain trip.id and try to find a PLATFORM_COMMISSION by trip.id.
+   *
+   * Returns null if none found.
+   */
+  async findPlatformCommissionByOrderId(
+    manager: EntityManager,
+    orderId: string,
+  ): Promise<Transaction | null> {
+    const repo = manager.getRepository(Transaction);
+
+    // 1) try direct lookup by order relation
+    const byOrder = await repo.findOne({
+      where: {
+        type: TransactionType.PLATFORM_COMMISSION,
+        order: { id: orderId } as any,
+      },
+      relations: ['order', 'trip'],
+    });
+    if (byOrder) return byOrder;
+
+    // 2) fallback: load order to get trip.id and search by trip (covers createPlatformCommission which sets trip)
+    try {
+      // import Order locally to avoid circular imports at top-level if needed
+      const order = await manager.getRepository('order').findOne({
+        where: { id: orderId } as any,
+        relations: ['trip'],
+      });
+
+      const tripId = (order as any)?.trip?.id;
+      if (!tripId) return null;
+
+      const byTrip = await repo.findOne({
+        where: {
+          type: TransactionType.PLATFORM_COMMISSION,
+          trip: { id: tripId } as any,
+        },
+        relations: ['trip', 'order'],
+      });
+
+      return byTrip ?? null;
+    } catch (err) {
+      // If order lookup fails or no trip relation, just return null (caller will fallback to order.platformCommissionAmount)
+      return null;
+    }
+  }
+  /**
+   * Create a REFUND transaction (idempotent by caller if needed).
+   *
+   * Params:
+   *  - orderId
+   *  - driverId?: string | null
+   *  - amount: positive number (gross)
+   *  - currency
+   *  - description?
+   *  - metadata?: Record<string, any> (can include idempotencyKey)
+   *  - status?: TransactionStatus (defaults to PENDING or PROCESSED)
+   */
+  async createRefund(
+    manager: EntityManager,
+    params: {
+      orderId: string;
+      driverId?: string | null;
+      amount: number;
+      currency: string;
+      description?: string;
+      metadata?: Record<string, any>;
+      status?: TransactionStatus;
+    },
+  ): Promise<Transaction> {
+    const repo = manager.getRepository(Transaction);
+    const amt = _roundTo2(params.amount);
+    if (!isFinite(amt) || amt <= 0) {
+      throw new ConflictException('Refund amount must be a positive number.');
+    }
+
+    const tx = repo.create({
+      type: TransactionType.REFUND,
+      order: { id: params.orderId } as any,
+      toUser: params.driverId ? ({ id: params.driverId } as any) : null,
+      grossAmount: amt,
+      platformFeeAmount: 0,
+      netAmount: amt,
+      currency: params.currency,
+      status: params.status ?? TransactionStatus.PENDING,
+      description: params.description ?? `refund for order ${params.orderId}`,
+      processedAt:
+        params.status === TransactionStatus.PROCESSED ? new Date() : null,
+      metadata: params.metadata ?? null,
+    } as DeepPartial<Transaction>);
+
+    try {
+      return await repo.save(tx);
+    } catch (err: any) {
+      // If unique constraint on some idempotency index exists, caller should re-query
+      handleRepositoryError(this.logger, err, 'createRefund', this.entityName);
+    }
+  }
+  /**
+   * Atomically find-or-create a REFUND transaction for an order.
+   *
+   * - Locks the order row FOR UPDATE to serialize concurrent refund attempts for the same order.
+   * - If a REFUND already exists for the order, returns it (created = false).
+   * - Otherwise creates a new REFUND (using createRefund) and returns it (created = true).
+   * - If a unique-constraint race occurs (23505) it will re-query and return the already-created tx.
+   *
+   * NOTE: this method assumes the business unit of concurrency is the order (one refund flow
+   * serialized per order). If you allow multiple partial refunds you should adapt logic accordingly.
+   */
+  async findOrCreateRefundForOrderAtomic(
+    manager: EntityManager,
+    orderId: string,
+    params: {
+      amount: number;
+      currency: string;
+      driverId?: string | null;
+      description?: string;
+      metadata?: Record<string, any>;
+      status?: TransactionStatus;
+    },
+  ): Promise<{ tx: Transaction; created: boolean }> {
+    const txRepo = manager.getRepository(Transaction);
+
+    // 1) lock order row to serialize concurrent refund attempts on same order
+    try {
+      const orderRow = await manager
+        .getRepository('order')
+        .createQueryBuilder('o')
+        .setLock('pessimistic_write')
+        .where('o.id = :orderId', { orderId })
+        .getOne();
+
+      if (!orderRow) {
+        throw new NotFoundException(
+          formatErrorResponse('ORDER_NOT_FOUND', 'Order not found', {
+            orderId,
+          }),
+        );
+      }
+    } catch (err) {
+      // rethrow NotFoundException or delegate other errors to handler
+      if (err instanceof NotFoundException) throw err;
+      handleRepositoryError(
+        this.logger,
+        err,
+        'findOrCreateRefundForOrderAtomic (lock order)',
+        this.entityName,
+      );
+    }
+
+    // 2) check existing refund (already locked by order above, so safe)
+    const existing = await this.findRefundByOrderId(manager, orderId);
+    if (existing) return { tx: existing, created: false };
+
+    // 3) try to create refund (may race with another process which has been waiting on the lock)
+    try {
+      const tx = await this.createRefund(manager, {
+        orderId,
+        driverId: params.driverId ?? null,
+        amount: params.amount,
+        currency: params.currency,
+        description: params.description,
+        metadata: params.metadata ?? undefined,
+        status: params.status ?? TransactionStatus.PENDING,
+      });
+
+      // createRefund uses repo.save and will throw on DB errors handled below
+      return { tx: tx, created: true };
+    } catch (err: any) {
+      // If there's a unique-violation from DB-level idempotency, re-query the refund and return it
+      if (err?.code === '23505') {
+        const again = await this.findRefundByOrderId(manager, orderId);
+        if (again) return { tx: again, created: false };
+      }
+      // otherwise surface the error consistently
+      handleRepositoryError(
+        this.logger,
+        err,
+        'findOrCreateRefundForOrderAtomic',
+        this.entityName,
+      );
+    }
+
+    // Should never reach here, but keep typing safe
+    throw new Error('Unexpected flow in findOrCreateRefundForOrderAtomic');
+  }
+
+  /**
+   * Sum of REFUND grossAmount (successful/pending) for a given order.
+   * Useful to validate partial refunds do not exceed paid amount.
+   */
+  async sumRefundsByOrder(
+    manager: EntityManager,
+    orderId: string,
+  ): Promise<number> {
+    const qb = manager
+      .getRepository(Transaction)
+      .createQueryBuilder('t')
+      .select('COALESCE(SUM(t.gross_amount),0)', 'total')
+      .where('t.order_id = :orderId', { orderId })
+      .andWhere('t.type = :type', { type: TransactionType.REFUND });
+
+    const raw = await qb.getRawOne();
+    return Number(raw?.total ?? 0);
   }
 }

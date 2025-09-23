@@ -8,7 +8,6 @@ import {
   MaxLength,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { VehicleCategoryDataDto } from './vehicle-category-data.dto';
 
 export class CreateVehicleCategoryDto {
   @ApiProperty({

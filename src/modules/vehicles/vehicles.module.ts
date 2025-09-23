@@ -11,8 +11,6 @@ import { VehiclesService } from './services/vehicles.service';
 import { User } from '../user/entities/user.entity';
 import { UserRepository } from '../user/repositories/user.repository';
 import { DataSource } from 'typeorm';
-import { DriverAvailabilityRepository } from '../drivers-availability/repositories/driver-availability.repository';
-import { DriverAvailabilityService } from '../drivers-availability/services/driver-availability.service';
 import { DriversAvailabilityModule } from '../drivers-availability/drivers-availability.module';
 
 @Module({

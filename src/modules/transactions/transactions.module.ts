@@ -14,6 +14,6 @@ import { UserRepository } from '../user/repositories/user.repository';
   imports: [TypeOrmModule.forFeature([Transaction, User, Order, Trip])],
   controllers: [TransactionsController],
   providers: [TransactionsService, TransactionRepository],
-  exports: [TransactionRepository],
+  exports: [TransactionRepository, TransactionsService],
 })
 export class TransactionsModule {}

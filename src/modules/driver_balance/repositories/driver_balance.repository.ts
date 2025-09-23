@@ -14,9 +14,9 @@ import {
   Repository,
 } from 'typeorm';
 import { DriverBalance } from '../../driver_balance/entities/driver_balance.entity';
-import { WalletMovement } from '../../wallet-movements/entities/wallet-movement.entity';
+import { WalletMovement } from '../entities/wallet-movement.entity';
 import { Transaction } from '../../transactions/entities/transaction.entity';
-import { CashCollectionRecord } from '../../cash_colletion_records/entities/cash_colletion_records.entity';
+import { CashCollectionRecord } from '../../cash_colletions_points/entities/cash_colletion_records.entity';
 import { CashCollectionPoint } from '../../cash_colletions_points/entities/cash_colletions_points.entity';
 import { handleRepositoryError } from 'src/common/utils/handle-repository-error';
 import { formatErrorResponse } from 'src/common/utils/api-response.utils';
@@ -52,8 +52,23 @@ export class DriverBalanceRepository extends Repository<DriverBalance> {
       .getOneOrFail();
   }
 
-  async findByDriverId(driverId: string): Promise<DriverBalance | null> {
-    return this.findOne({ where: { driverId } });
+  async findByDriverId(
+    driverId: string,
+    manager?: EntityManager,
+  ): Promise<DriverBalance | null> {
+    try {
+      if (!manager) {
+        return this.findOne({ where: { driverId } });
+      }
+      return manager.findOne(DriverBalance, { where: { driverId } });
+    } catch (error) {
+      handleRepositoryError(
+        this.logger,
+        error,
+        'findByTransactionId',
+        this.entityName,
+      );
+    }
   }
 
   /**
@@ -127,7 +142,7 @@ export class DriverBalanceRepository extends Repository<DriverBalance> {
       return { wallet, previousStatus, changed: false, changedAt };
     }
 
-     // If manual call: for 'blocked' use generic manual reason; for 'active' set unblocked meta as null (no performer)
+    // If manual call: for 'blocked' use generic manual reason; for 'active' set unblocked meta as null (no performer)
     if (newStatus === 'blocked') {
       // manual block: keep blockedAt if already set, otherwise set now.
       wallet.status = 'blocked';

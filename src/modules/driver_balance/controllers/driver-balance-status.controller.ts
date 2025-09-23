@@ -3,6 +3,7 @@ import {
   Controller,
   HttpCode,
   HttpStatus,
+  Logger,
   Param,
   ParseUUIDPipe,
   Post,
@@ -23,12 +24,15 @@ import { BlockDriverWalletDto } from '../dto/block-driver-wallet.dto';
 import { WalletStatusResponseDto } from '../dto/wallet-status-response.dto';
 import { UnblockDriverWalletDto } from '../dto/unblock-driver-wallet.dto';
 import { formatSuccessResponse } from 'src/common/utils/api-response.utils';
+import { Public } from 'src/modules/auth/decorators/public.decorator';
 
 @ApiTags('wallets-status')
 @Controller('wallets-status/:driverId')
 export class WalletsStatusController {
+  private readonly logger = new Logger(WalletsStatusController.name);
   constructor(private readonly walletsService: DriverBalanceService) {}
 
+  @Public()
   @Post('block')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -65,6 +69,7 @@ export class WalletsStatusController {
     );
   }
 
+  @Public()
   @Post('unblock')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({

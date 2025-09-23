@@ -74,7 +74,8 @@ export class DriverBalanceController {
     return apiResp;
   }
 
-  @Post('commissions/cash')
+  @Public()
+  @Post(':driverId/commissions/cash')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Aplica comisión de viaje en efectivo',
@@ -119,7 +120,8 @@ export class DriverBalanceController {
     return formatSuccessResponse('Comisión aplicada correctamente.', response);
   }
   //Crear recarga de wallet en efectivo (CCR pending)
-  @Post('topups')
+  @Public()
+  @Post(':driverId/topups')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Crear depósito en efectivo (CCR pending)',
@@ -153,7 +155,8 @@ export class DriverBalanceController {
     return formatSuccessResponse('CashCollectionRecord creado (pending).', res);
   }
   //Confirmar recraga de wallet en efectivo
-  @Post('topups/:ccrId/confirm')
+  @Public()
+  @Post(':driverId/topups/:ccrId/confirm')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Confirmar depósito en efectivo',

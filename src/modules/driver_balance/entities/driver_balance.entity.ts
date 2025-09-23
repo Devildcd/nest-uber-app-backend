@@ -12,7 +12,7 @@ import {
 } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { DecimalTransformer } from '../../../common/validators/decimal.transformer';
-import { WalletMovement } from '../../wallet-m../../wallet-movements/entities/wallet-movement.entity';
+import { WalletMovement } from './wallet-movement.entity';
 
 @Entity({ name: 'driver_balance' })
 export class DriverBalance {
@@ -90,7 +90,12 @@ export class DriverBalance {
   @Column({ name: 'blocked_at', type: 'timestamptz', nullable: true })
   blockedAt?: Date | null;
 
-  @Column({ name: 'blocked_reason', type: 'varchar', length: 250, nullable: true })
+  @Column({
+    name: 'blocked_reason',
+    type: 'varchar',
+    length: 250,
+    nullable: true,
+  })
   blockedReason?: string | null;
 
   @Column({ name: 'unblocked_at', type: 'timestamptz', nullable: true })

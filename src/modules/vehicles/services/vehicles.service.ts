@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   forwardRef,
   Inject,
   Injectable,
@@ -20,19 +21,15 @@ import {
 } from 'src/common/utils/api-response.utils';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 
-import { Vehicle, VehicleStatus } from '../entities/vehicle.entity';
+import { Vehicle } from '../entities/vehicle.entity';
 import { VehicleRepository } from '../repositories/vehicle.repository';
 import { VehicleTypeRepository } from '../../vehicle-types/repositories/vehicle-types.repository';
-import {
-  DriverProfile,
-  DriverStatus,
-} from '../../driver-profiles/entities/driver-profile.entity';
+import { DriverProfile } from '../../driver-profiles/entities/driver-profile.entity';
 
 import { CreateVehicleDto } from '../dto/create-vehicle.dto';
 import { UpdateVehicleDto } from '../dto/update-vehicle.dto';
 import { VehicleResponseDto } from '../dto/vehicle-response.dto';
 import { VehicleListItemDto } from '../dto/vehicle-list-item.dto';
-import { DriverProfileRepository } from 'src/modules/driver-profiles/repositories/driver-profile.repository';
 import { VehicleFilterDto } from '../dto/vehicle-filter.dto';
 import { UserRepository } from '../../user/repositories/user.repository';
 import { DriverAvailabilityRepository } from 'src/modules/drivers-availability/repositories/driver-availability.repository';
@@ -41,6 +38,7 @@ import {
   DriverAvailability,
 } from 'src/modules/drivers-availability/entities/driver-availability.entity';
 import { DriverAvailabilityService } from 'src/modules/drivers-availability/services/driver-availability.service';
+import { CreateVehicleOnboardingDto } from '../dto/create-vehicle-onboarding.dto';
 @Injectable()
 export class VehiclesService {
   private readonly logger = new Logger(VehiclesService.name);
@@ -161,6 +159,67 @@ export class VehiclesService {
     } finally {
       await queryRunner.release();
     }
+  }
+
+  /** Crear vehículo dentro de una transacción externa */
+  async createWithinTx(
+    dto: CreateVehicleOnboardingDto & {
+      driverId: string;
+      driverProfileId: string;
+    },
+    manager: EntityManager,
+  ): Promise<Vehicle> {
+    // Validar VehicleType
+    const vehicleType = await this.vehicleTypeRepository.findById(
+      dto.vehicleTypeId,
+      manager,
+    );
+    if (!vehicleType)
+      throw new NotFoundException(`VehicleType ${dto.vehicleTypeId} not found`);
+
+    // Validar Driver
+    const driver = await this.userRepository.findById(dto.driverId, manager);
+    if (!driver)
+      throw new NotFoundException(`DriverId ${dto.driverId} not found`);
+
+    // Validar DriverProfile
+    const driverProfile = await manager.findOne(DriverProfile, {
+      where: { id: dto.driverProfileId },
+    });
+    if (!driverProfile)
+      throw new NotFoundException(
+        `DriverProfile ${dto.driverProfileId} not found`,
+      );
+
+    // Unicidad de placa
+    const existingPlate = await this.repo.findByPlateNumber(
+      dto.plateNumber,
+      manager,
+    );
+    if (existingPlate) {
+      throw new ConflictException(
+        `Vehicle plate number "${dto.plateNumber}" already exists`,
+      );
+    }
+
+    const partial: Partial<Vehicle> = {
+      vehicleType,
+      driver,
+      driverProfile,
+      make: dto.make,
+      model: dto.model,
+      year: dto.year,
+      plateNumber: dto.plateNumber,
+      color: dto.color,
+      capacity: dto.capacity,
+      isActive: dto.isActive,
+      status: dto.status,
+      inspectionDate: dto.inspectionDate,
+      lastMaintenanceDate: dto.lastMaintenanceDate,
+      mileage: dto.mileage,
+    };
+
+    return this.repo.createAndSave(partial, manager);
   }
 
   // Funcionalidad para cambiar el estado de un vehiculo atomicamente
