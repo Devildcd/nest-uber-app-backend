@@ -22,6 +22,11 @@ export class VehicleTypeRepository extends Repository<VehicleType> {
     super(VehicleType, dataSource.createEntityManager());
   }
 
+  /** Devuelve un repo “scoped” al manager si viene, o al repo actual */
+  private scoped(manager?: EntityManager): Repository<VehicleType> {
+    return manager ? manager.getRepository(VehicleType) : this;
+  }
+
   async createAndSave(
     typeLike: DeepPartial<VehicleType>,
     manager?: EntityManager,
@@ -36,21 +41,62 @@ export class VehicleTypeRepository extends Repository<VehicleType> {
     }
   }
 
-  async findById(id: string): Promise<VehicleType | null> {
+  /** Obtener por id (con relaciones por defecto) */
+  async findById(
+    id: string,
+    manager?: EntityManager,
+    opts: { relations?: boolean | string[] } = { relations: true },
+  ): Promise<VehicleType | null> {
+    const repo = this.scoped(manager);
     try {
-      return this.findOne({
-        where: { id },
-        relations: ['category', 'serviceClasses'],
-      });
+      if (opts.relations) {
+        const rels =
+          typeof opts.relations === 'boolean'
+            ? { category: true, serviceClasses: true } // <- relaciones por defecto
+            : opts.relations;
+        return await repo.findOne({
+          where: { id } as any,
+          relations: rels as any,
+        });
+      }
+      return await repo.findOne({ where: { id } as any });
     } catch (err) {
       handleRepositoryError(this.logger, err, 'findById', this.entityName);
     }
   }
-  async findByName(name: string): Promise<VehicleType | null> {
+
+  /** Obtener por nombre (sin relaciones por defecto) */
+  async findByName(
+    name: string,
+    manager?: EntityManager,
+  ): Promise<VehicleType | null> {
+    const repo = this.scoped(manager);
     try {
-      return this.findOne({ where: { name } });
+      return await repo.findOne({ where: { name } as any });
     } catch (err) {
       handleRepositoryError(this.logger, err, 'findByName', this.entityName);
+    }
+  }
+
+  /** Versión con lock pesimista (útil en flujos críticos) */
+  async findByIdForUpdate(
+    id: string,
+    manager: EntityManager,
+  ): Promise<VehicleType | null> {
+    try {
+      return await manager
+        .getRepository(VehicleType)
+        .createQueryBuilder('vt')
+        .setLock('pessimistic_write')
+        .where('vt.id = :id', { id })
+        .getOne();
+    } catch (err) {
+      handleRepositoryError(
+        this.logger,
+        err,
+        'findByIdForUpdate',
+        this.entityName,
+      );
     }
   }
 

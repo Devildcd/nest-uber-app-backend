@@ -41,6 +41,10 @@ import { OrderDataDto } from '../dto/order-data.dto';
 import { formatSuccessResponse } from 'src/common/utils/api-response.utils';
 import { ConfirmCashOrderDto } from '../dto/confirm-cash-order.dto';
 import { ConfirmCashOrderResponseDto } from '../dto/confirm-cash-order-response.dto';
+import { ImmediateRefundDto } from '../dto/immediate-refund.dto';
+import { NormalRefundDto } from '../dto/order-normal-refund.dto';
+import { CommissionAdjustmentResponseDto } from '../dto/comission-adjustment-response.dto';
+import { AdjustCommissionDto } from '../dto/comission-adjustment.dto';
 
 @ApiTags('orders')
 @Controller('orders')
@@ -87,7 +91,8 @@ export class OrdersController {
     return this.ordersService.findById(id);
   }
 
-  @Post('trips/:tripId')
+  @Public()
+  @Post(':tripId/trips')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     summary: 'Cierre de viaje → Generar Order (pending, CASH)',
@@ -152,7 +157,7 @@ export class OrdersController {
 
   //Aprobar orden de pago
   @Public()
-  @Patch(':id/confirm-cash')
+  @Patch(':orderId/confirm-cash')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Confirmar pago en efectivo de una Order (idempotente)',
@@ -191,5 +196,133 @@ export class OrdersController {
   async remove(@Param('id') id: string): Promise<ApiResponseInterface<null>> {
     this.logger.log(`Deleting order ${id}`);
     return this.ordersService.remove(id);
+  }
+
+  @Post(':id/immediate-refund')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Admin: Immediate reversal for a PAID order (within policy window)',
+  })
+  @ApiParam({ name: 'id', description: 'UUID of the order' })
+  @ApiBody({ type: ImmediateRefundDto })
+  @ApiOkResponse({
+    description:
+      'Immediate reversal processed or flagged to run normal refund flow',
+  })
+  @ApiBadRequestResponse({ description: 'Invalid request or order state' })
+  @ApiNotFoundResponse({ description: 'Order not found' })
+  @ApiInternalServerErrorResponse({ description: 'Internal server error' })
+  async immediateRefund(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) orderId: string,
+    @Body() body: ImmediateRefundDto,
+  ) {
+    this.logger.log(
+      `Admin ${body.adminId} requested immediate refund for order ${orderId}`,
+      { body },
+    );
+
+    // convert minutes -> ms if provided
+    const policyWindowMs = body.policyWindowMinutes
+      ? body.policyWindowMinutes * 60 * 1000
+      : undefined;
+
+    const result = await this.ordersService.processImmediateRefund(orderId, {
+      adminId: body.adminId,
+      reason: body.reason,
+      policyWindowMs,
+    });
+
+    // If service indicates the order is outside immediate window, caller should run normal refund flow
+    if (result.forceNormalRefund) {
+      return formatSuccessResponse(
+        'Order is outside immediate reversal window. Please execute normal refund flow.',
+        result,
+      );
+    }
+
+    // Normal positive response
+    return formatSuccessResponse(
+      result.reverted
+        ? 'Immediate reversal processed'
+        : 'No action required (idempotent)',
+      result,
+    );
+  }
+  @Post(':id/refunds')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Admin: Create normal refund for an order (cash / off-platform)',
+  })
+  @ApiParam({ name: 'id', description: 'UUID of the order' })
+  @ApiBody({ type: NormalRefundDto })
+  @ApiOkResponse({
+    description: 'Refund processed and CCR created (cash off-platform)',
+  })
+  @ApiBadRequestResponse({ description: 'Invalid request or state' })
+  @ApiNotFoundResponse({ description: 'Order not found' })
+  @ApiInternalServerErrorResponse({ description: 'Internal server error' })
+  async normalRefund(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) orderId: string,
+    @Body() body: NormalRefundDto,
+  ) {
+    this.logger.log(
+      `Admin ${body.adminId ?? 'unknown'} requested normal (cash) refund for order ${orderId}`,
+      { body },
+    );
+
+    const result = await this.ordersService.processNormalRefund(orderId, {
+      adminId: body.adminId,
+      requestedBy: body.adminId,
+      reason: body.reason,
+      amount: body.amount,
+      idempotencyKey: body.idempotencyKey,
+    });
+
+    return formatSuccessResponse('Refund request processed', result);
+  }
+
+  @Public()
+  @Post(':id/commission-adjustments')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Adjust commission (post-facto) for an order (idempotent)',
+    description:
+      'Applies a post-facto commission adjustment to the order/driver. Idempotent by (orderId, adjustmentSeq). ' +
+      'Either send deltaFee (positive = platform charges more; negative = platform refunds) or newFee (the final fee), ' +
+      'and an adjustmentSeq to guarantee idempotency.',
+  })
+  @ApiParam({ name: 'id', description: 'UUID of the order' })
+  @ApiBody({ type: AdjustCommissionDto })
+  @ApiOkResponse({
+    description: 'Commission adjusted (or existing adjustment returned)',
+    type: CommissionAdjustmentResponseDto,
+  })
+  @ApiBadRequestResponse({ description: 'Invalid payload or business rule' })
+  @ApiNotFoundResponse({ description: 'Order not found' })
+  @ApiConflictResponse({
+    description:
+      'Conflict (e.g. amount mismatch or DB unique violation handled)',
+  })
+  @ApiInternalServerErrorResponse({ description: 'Internal server error' })
+  async adjustCommission(
+    @Param('id', new ParseUUIDPipe({ version: '4' })) orderId: string,
+    @Body() dto: AdjustCommissionDto,
+  ): Promise<ApiResponseInterface<CommissionAdjustmentResponseDto>> {
+    this.logger.log(`Adjust commission requested for order ${orderId}`, {
+      adjustmentSeq: dto?.adjustmentSeq,
+    });
+
+    // Forzamos el orderId desde el path (ignora si viene en el body)
+    dto.orderId = orderId;
+
+    const result = await this.ordersService.adjustCommission(orderId, dto);
+
+    return formatSuccessResponse(
+      result.alreadyExisted
+        ? 'Adjustment already existed (idempotent)'
+        : 'Commission adjusted successfully',
+      result as CommissionAdjustmentResponseDto,
+    );
   }
 }

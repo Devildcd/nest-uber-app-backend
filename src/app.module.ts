@@ -15,16 +15,18 @@ import { VehiclesModule } from './modules/vehicles/vehicles.module';
 import { DriverProfilesModule } from './modules/driver-profiles/driver-profiles.module';
 import { VehicleCategoryModule } from './modules/vehicle-category/vehicle-category.module';
 import { VehicleTypesModule } from './modules/vehicle-types/vehicle-types.module';
-import { Vehicle } from './modules/vehicles/entities/vehicle.entity';
 import { TransactionsModule } from './modules/transactions/transactions.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { DriversAvailabilityModule } from './modules/drivers-availability/drivers-availability.module';
-import { VehicleServiceClass } from './modules/vehicle-service-classes/entities/vehicle-service-classes.entity';
 import { VehicleServiceClassesModule } from './modules/vehicle-service-classes/vehicle-service-classes.module';
 import { DriverBalanceModule } from './modules/driver_balance/driver_balance.module';
 import { WalletMovementsModule } from './modules/wallet-movements/wallet-movements.module';
-import { CashColletionRecordsModule } from './modules/cash_colletion_records/cash_colletion_records.module';
 import { CashColletionsPointsModule } from './modules/cash_colletions_points/cash_colletions_points.module';
+import { OutboxModule } from './infrastructure/outbox/outbox.module';
+import { QueueModule } from './infrastructure/queue/queue.module';
+import { WsModule } from './infrastructure/ws/ws.module';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+import { CoreSettingsModule } from './modules/core-settings/core-settings.module';
 @Module({
   imports: [
     MailModule,
@@ -45,8 +47,19 @@ import { CashColletionsPointsModule } from './modules/cash_colletions_points/cas
     VehicleServiceClassesModule,
     DriverBalanceModule,
     WalletMovementsModule,
-    CashColletionRecordsModule,
     CashColletionsPointsModule,
+    OutboxModule,
+    QueueModule,
+    WsModule,
+    EventEmitterModule.forRoot({
+      // opciones útiles de eventemitter2
+      wildcard: true, // habilita patrones 'trip.*'
+      delimiter: '.', // separador de namespaces
+      maxListeners: 20, // evita memory leaks
+      newListener: false,
+      removeListener: false,
+    }),
+    CoreSettingsModule,
   ],
   controllers: [AppController],
   providers: [AppService, DatabaseConfigService],

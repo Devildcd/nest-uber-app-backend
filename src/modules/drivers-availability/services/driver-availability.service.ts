@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  forwardRef,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { DriverAvailabilityRepository } from '../repositories/driver-availability.repository';
 import { DriverAvailabilityQueryDto } from '../dtos/driver-availability-query.dto';
 import { DriverAvailabilityResponseDto } from '../dtos/driver-availability-response.dto';

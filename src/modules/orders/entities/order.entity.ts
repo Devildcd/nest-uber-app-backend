@@ -102,6 +102,9 @@ export class Order {
   })
   paymentType: PaymentType;
 
+  @Column({ type: 'jsonb', nullable: true })
+  metadata?: Record<string, any>;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 

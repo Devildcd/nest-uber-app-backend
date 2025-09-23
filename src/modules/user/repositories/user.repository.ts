@@ -4,6 +4,7 @@ import {
   Repository,
   DeepPartial,
   SelectQueryBuilder,
+  EntityManager,
 } from 'typeorm';
 import { User } from '../entities/user.entity';
 import { UserFiltersDto } from '../dto/user-filters.dto';
@@ -19,12 +20,75 @@ export class UserRepository extends Repository<User> {
     super(User, dataSource.createEntityManager());
   }
 
+  private scoped(manager?: EntityManager): Repository<User> {
+    return manager ? manager.getRepository(User) : this;
+  }
+
   async createAndSave(userLike: DeepPartial<User>): Promise<User> {
     const user = this.create(userLike);
     try {
       return await this.save(user);
     } catch (err) {
       handleRepositoryError(this.logger, err, 'createAndSave', this.entityName);
+    }
+  }
+
+  /** Obtener por id con relaciones (authCredentials, vehicles) */
+  async findById(
+    id: string,
+    manager?: EntityManager,
+    opts: { relations?: boolean | string[] } = { relations: true },
+  ): Promise<User | null> {
+    const repo = this.scoped(manager);
+    try {
+      if (opts.relations) {
+        const rels =
+          typeof opts.relations === 'boolean'
+            ? { authCredentials: true, vehicles: true }
+            : opts.relations;
+        return await repo.findOne({
+          where: { id } as any,
+          relations: rels as any,
+        });
+      }
+      return await repo.findOne({ where: { id } as any });
+    } catch (err) {
+      handleRepositoryError(this.logger, err, 'findById', this.entityName);
+    }
+  }
+
+  /** Sólo por email/username si lo necesitas */
+  async findByEmail(
+    email: string,
+    manager?: EntityManager,
+  ): Promise<User | null> {
+    const repo = this.scoped(manager);
+    try {
+      return await repo.findOne({ where: { email } as any });
+    } catch (err) {
+      handleRepositoryError(this.logger, err, 'findByEmail', this.entityName);
+    }
+  }
+
+  /** Con lock (para flujos que cambian estado/cuentas) */
+  async findByIdForUpdate(
+    id: string,
+    manager: EntityManager,
+  ): Promise<User | null> {
+    try {
+      return await manager
+        .getRepository(User)
+        .createQueryBuilder('u')
+        .setLock('pessimistic_write')
+        .where('u.id = :id', { id })
+        .getOne();
+    } catch (err) {
+      handleRepositoryError(
+        this.logger,
+        err,
+        'findByIdForUpdate',
+        this.entityName,
+      );
     }
   }
 
@@ -36,17 +100,6 @@ export class UserRepository extends Repository<User> {
         .getExists();
     } catch (err) {
       handleRepositoryError(this.logger, err, 'existsByEmail', this.entityName);
-    }
-  }
-
-  async findById(id: string): Promise<User | null> {
-    try {
-      return this.findOne({
-        where: { id },
-        relations: ['authCredentials', 'vehicles'],
-      });
-    } catch (err) {
-      handleRepositoryError(this.logger, err, 'findById', this.entityName);
     }
   }
 

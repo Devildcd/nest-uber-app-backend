@@ -179,15 +179,12 @@ export class OrderRepository extends Repository<Order> {
   }
 
   async loadAndLockOrder(
-    manager: EntityManager,
     orderId: string,
+    manager: EntityManager,
   ): Promise<Order> {
     const qb = manager
       .getRepository(Order)
       .createQueryBuilder('o')
-      .leftJoinAndSelect('o.trip', 'trip')
-      .leftJoinAndSelect('o.driver', 'driver')
-      .leftJoinAndSelect('o.passenger', 'passenger')
       .setLock('pessimistic_write')
       .where('o.id = :orderId', { orderId });
 

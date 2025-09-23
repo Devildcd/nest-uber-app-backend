@@ -1,10 +1,17 @@
 import {
   BadRequestException,
+  forwardRef,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, QueryFailedError, QueryRunner } from 'typeorm';
+import {
+  DataSource,
+  EntityManager,
+  QueryFailedError,
+  QueryRunner,
+} from 'typeorm';
 import { DriverProfileRepository } from '../repositories/driver-profile.repository';
 import { CreateDriverProfileDto } from '../dto/create-driver-profile.dto';
 import { UpdateDriverProfileDto } from '../dto/update-driver-profile.dto';
@@ -19,6 +26,11 @@ import {
 import { DriverProfile } from '../entities/driver-profile.entity';
 import { UserRepository } from 'src/modules/user/repositories/user.repository';
 import { DriverProfileResponseDto } from '../dto/driver-profile-response.dto';
+import { withQueryRunnerTx } from 'src/common/utils/tx.util';
+import { CreateDriverAvailabilityDto } from 'src/modules/drivers-availability/dtos/create-driver-availability.dto';
+import { DriverBalanceService } from 'src/modules/driver_balance/services/driver_balance.service';
+import { DriverAvailabilityService } from 'src/modules/drivers-availability/services/driver-availability.service';
+import { VehiclesService } from 'src/modules/vehicles/services/vehicles.service';
 
 @Injectable()
 export class DriverProfileService {
@@ -28,6 +40,11 @@ export class DriverProfileService {
     private readonly dataSource: DataSource,
     private readonly repo: DriverProfileRepository,
     private readonly userRepository: UserRepository,
+    private readonly driverBalanceService: DriverBalanceService,
+    @Inject(forwardRef(() => DriverAvailabilityService))
+    private readonly driverAvailabilityService: DriverAvailabilityService,
+    @Inject(forwardRef(() => VehiclesService))
+    private readonly vehicleService: VehiclesService,
   ) {}
 
   async findAll(
@@ -106,107 +123,96 @@ export class DriverProfileService {
     }
   }
 
-  async create(
-    dto: CreateDriverProfileDto,
-  ): Promise<ApiResponse<DriverProfileResponseDto>> {
-    const qr = this.dataSource.createQueryRunner();
-    await qr.connect();
-    await qr.startTransaction();
+  async create(dto: CreateDriverProfileDto): Promise<DriverProfileResponseDto> {
+    const profile = await withQueryRunnerTx(
+      this.dataSource,
+      async (_qr, manager) => {
+        // 1) validar usuario
+        const user = await this.userRepository.findOne({
+          where: { id: dto.userId },
+        });
+        if (!user) throw new NotFoundException(`User ${dto.userId} no existe`);
 
-    try {
-      // 1) Cargamos sólo los campos necesarios del usuario
-      const user = await this.userRepository.findOne({
-        where: { id: dto.userId },
-      });
-      if (!user) {
-        throw new NotFoundException(`User ${dto.userId} no existe`);
-      }
+        // 2) desarmar fechas
+        const {
+          driverLicenseExpirationDate,
+          backgroundCheckDate,
+          paidPriorityUntil,
+          ...rest
+        } = dto;
 
-      // 2) Desestructuramos fechas y resto de campos
-      const {
-        driverLicenseExpirationDate,
-        backgroundCheckDate,
-        paidPriorityUntil,
-        ...rest
-      } = dto;
+        // 3) parcial entidad
+        const partial: Partial<DriverProfile> = {
+          user: { id: dto.userId } as any,
+          ...rest,
+          driverLicenseExpirationDate: new Date(driverLicenseExpirationDate),
+          ...(backgroundCheckDate && {
+            backgroundCheckDate: new Date(backgroundCheckDate),
+          }),
+          ...(paidPriorityUntil && {
+            paidPriorityUntil: new Date(paidPriorityUntil),
+          }),
+        };
 
-      // 3) Preparamos el objeto de creación, convirtiendo strings a Date
-      const partial: Partial<DriverProfile> = {
-        user,
-        ...rest,
-        driverLicenseExpirationDate: new Date(driverLicenseExpirationDate),
-        ...(backgroundCheckDate && {
-          backgroundCheckDate: new Date(backgroundCheckDate),
-        }),
-        ...(paidPriorityUntil && {
-          paidPriorityUntil: new Date(paidPriorityUntil),
-        }),
-      };
+        // 4) crear perfil
+        const created = await this.repo.createAndSave(partial, manager);
 
-      // 4) Persistimos en la transacción
-      const profile = await this.repo.createAndSave(partial, qr.manager);
-      await qr.commitTransaction();
+        // 5) crear wallet (dentro de la TX)
+        await this.driverBalanceService.createOnboardingTx(
+          dto.userId,
+          manager,
+          'CUP',
+        );
 
-      // 5) Mapeamos a DTO de respuesta
-      const data: DriverProfileResponseDto = {
-        id: profile.id,
-        userId: profile.user.id,
-        driverLicenseNumber: profile.driverLicenseNumber,
-        driverLicenseExpirationDate:
-          profile.driverLicenseExpirationDate.toISOString(),
-        driverLicensePictureUrl: profile.driverLicensePictureUrl,
-        backgroundCheckStatus: profile.backgroundCheckStatus,
-        backgroundCheckDate: profile.backgroundCheckDate?.toISOString(),
-        isApproved: profile.isApproved,
-        emergencyContactInfo: profile.emergencyContactInfo,
-        driverStatus: profile.driverStatus,
-        paidPriorityUntil: profile.paidPriorityUntil?.toISOString(),
-        createdAt: profile.createdAt.toISOString(),
-        updatedAt: profile.updatedAt.toISOString(),
-        deletedAt: profile.deletedAt?.toISOString(),
-      };
-
-      return {
-        success: true,
-        message: 'Driver profile created successfully',
-        data,
-      };
-    } catch (err: any) {
-      await qr.rollbackTransaction();
-
-      if (err instanceof QueryFailedError) {
-        const pgErr = err.driverError as { code: string; detail?: string };
-        if (pgErr.code === '23505') {
-          return formatErrorResponse(
-            'Resource conflict',
-            'CONFLICT_ERROR',
-            pgErr.detail,
+        let createdVehicleId: string | null = null;
+        if (dto.initialVehicle) {
+          const v = await this.vehicleService.createWithinTx(
+            {
+              ...dto.initialVehicle,
+              driverId: dto.userId,
+              driverProfileId: created.id,
+            },
+            manager,
           );
+          createdVehicleId = v.id;
         }
-      }
-      if (err instanceof NotFoundException) {
-        return formatErrorResponse(
-          'Resource not found',
-          'NOT_FOUND',
-          err.message,
-        );
-      }
-      if (err instanceof BadRequestException) {
-        return formatErrorResponse(
-          'Invalid request',
-          'BAD_REQUEST',
-          err.message,
-        );
-      }
 
-      return handleServiceError<DriverProfileResponseDto>(
-        this.logger,
-        err,
-        'DriversService.create',
-      );
-    } finally {
-      await qr.release();
-    }
+        // 6) crear disponibilidad base (OFFLINE/UNAVAILABLE)
+        const availabilityDto: CreateDriverAvailabilityDto = {
+          driverId: dto.userId,
+          isOnline: false,
+          isAvailableForTrips: false,
+          currentTripId: null,
+          currentVehicleId: createdVehicleId,
+        };
+        await this.driverAvailabilityService.createWithinTx(
+          availabilityDto,
+          manager,
+        );
+
+        return created;
+      },
+      { logLabel: 'driverProfile.create' },
+    );
+
+    // 7) mapear plano (sin envelope)
+    return {
+      id: profile.id,
+      userId: (profile.user as any)?.id ?? (profile as any).userId,
+      driverLicenseNumber: profile.driverLicenseNumber,
+      driverLicenseExpirationDate:
+        profile.driverLicenseExpirationDate.toISOString(),
+      driverLicensePictureUrl: profile.driverLicensePictureUrl,
+      backgroundCheckStatus: profile.backgroundCheckStatus,
+      backgroundCheckDate: profile.backgroundCheckDate?.toISOString(),
+      isApproved: profile.isApproved,
+      emergencyContactInfo: profile.emergencyContactInfo,
+      driverStatus: profile.driverStatus,
+      paidPriorityUntil: profile.paidPriorityUntil?.toISOString(),
+      createdAt: profile.createdAt.toISOString(),
+      updatedAt: profile.updatedAt.toISOString(),
+      deletedAt: profile.deletedAt?.toISOString(),
+    };
   }
 
   /**

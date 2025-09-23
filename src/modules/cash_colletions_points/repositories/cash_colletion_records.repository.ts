@@ -16,11 +16,11 @@ import {
   CashCollectionRecord,
   CashCollectionStatus,
 } from '../entities/cash_colletion_records.entity';
-import { PaginationDto } from '../../../common/dto/pagination.dto';
-import { CashCollectionRecordFilterDto } from '../dto/cash-collection-record-filter.dto';
 import { handleRepositoryError } from 'src/common/utils/handle-repository-error';
 import { Transaction } from '../../transactions/entities/transaction.entity';
 import { formatErrorResponse } from 'src/common/utils/api-response.utils';
+import { CashCollectionRecordFilterDto } from '../dto/cash-collection-record-filter.dto';
+
 @Injectable()
 export class CashCollectionRecordRepository extends Repository<CashCollectionRecord> {
   private readonly logger = new Logger(CashCollectionRecordRepository.name);
@@ -286,5 +286,79 @@ export class CashCollectionRecordRepository extends Repository<CashCollectionRec
       where: { id },
       relations: ['transaction', 'driver'],
     });
+  }
+  /**
+   * Create an off-platform refund note as a CashCollectionRecord.
+   *
+   * This is intended for admin-driven cash refunds which are handled outside
+   * the payments flow (no gateway refund). The record is created with amount=0
+   * and status=COMPLETED to serve as an auditable note/support.
+   *
+   * Params:
+   *  - manager: EntityManager (must be passed when called inside a tx)
+   *  - params:
+   *     - orderId?: string       (optional reference to the order being reversed)
+   *     - driverId?: string      (driver for whom the refund applies)
+   *     - adminId: string        (user performing the admin reversal)
+   *     - note?: string          (optional free text)
+   *     - currency?: string      (optional currency, default 'CUP')
+   */
+  async createOffPlatformRefundNote(
+    manager: EntityManager,
+    params: {
+      orderId?: string;
+      driverId?: string | null;
+      adminId: string;
+      note?: string | null;
+      currency?: string | null;
+    },
+  ): Promise<CashCollectionRecord> {
+    const repo = manager.getRepository(CashCollectionRecord);
+    const currency = params.currency ?? 'CUP';
+    const now = new Date();
+
+    const composedNoteParts: string[] = [];
+    composedNoteParts.push(`off-platform refund note`);
+    if (params.orderId) composedNoteParts.push(`order:${params.orderId}`);
+    composedNoteParts.push(`admin:${params.adminId}`);
+    composedNoteParts.push(`at:${now.toISOString()}`);
+    if (params.note) composedNoteParts.push(`note:${params.note}`);
+
+    const entity = repo.create({
+      driver: params.driverId ? ({ id: params.driverId } as any) : null,
+      collectionPoint: undefined,
+      collectedBy: params.adminId ? ({ id: params.adminId } as any) : null,
+      amount: 0,
+      currency,
+      status: CashCollectionStatus.COMPLETED,
+      transaction: undefined,
+      notes: composedNoteParts.join(' | '),
+    } as DeepPartial<CashCollectionRecord>);
+
+    try {
+      const saved = await repo.save(entity);
+      return (await repo.findOne({
+        where: { id: saved.id },
+        relations: ['driver', 'collectionPoint', 'collectedBy', 'transaction'],
+      })) as CashCollectionRecord;
+    } catch (err: any) {
+      // Unique constraint on transaction shouldn't trigger here (transaction is null),
+      // but still use generic error handling for consistency.
+      if (err?.code === '23505') {
+        throw new ConflictException(
+          formatErrorResponse(
+            'CCR_CONFLICT',
+            'Conflict creating off-platform refund note.',
+            { orderId: params.orderId, adminId: params.adminId },
+          ),
+        );
+      }
+      handleRepositoryError(
+        this.logger,
+        err,
+        'createOffPlatformRefundNote',
+        this.entityName,
+      );
+    }
   }
 }

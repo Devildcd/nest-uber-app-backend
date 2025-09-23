@@ -12,7 +12,7 @@ import {
   DeleteDateColumn,
   Unique,
 } from 'typeorm';
-import { CashCollectionPoint } from '../../cash_colletions_points/entities/cash_colletions_points.entity';
+import { CashCollectionPoint } from './cash_colletions_points.entity';
 import { User } from '../../user/entities/user.entity';
 import { Transaction } from '../../transactions/entities/transaction.entity';
 import { DecimalTransformer } from '../../../common/validators/decimal.transformer';
