@@ -7,13 +7,21 @@ import {
   Index,
   CreateDateColumn,
   UpdateDateColumn,
-  ValueTransformer,
+  OneToMany,
+  Point,
 } from 'typeorm';
 
 import { User } from 'src/modules/user/entities/user.entity';
 import { Vehicle } from 'src/modules/vehicles/entities/vehicle.entity';
 import { FareBreakdown } from '../interfaces/trip.interfaces';
 import { Order } from 'src/modules/orders/entities/order.entity';
+import { DecimalTransformer } from 'src/common/validators/decimal.transformer';
+import { TripStop } from 'src/modules/trip/entities/trip-stop.entity';
+import { TripEvent } from 'src/modules/trip/entities/trip-event.entity';
+import { TripAssignment } from './trip-assignment.entity';
+import { VehicleCategory } from 'src/modules/vehicle-category/entities/vehicle-category.entity';
+import { VehicleServiceClass } from 'src/modules/vehicle-service-classes/entities/vehicle-service-classes.entity';
+import { VehicleType } from 'src/modules/vehicle-types/entities/vehicle-types.entity';
 
 // ---------- ENUMS ----------
 export enum TripStatus {
@@ -32,18 +40,10 @@ export enum PaymentMode {
   CASH = 'cash',
   CARD = 'card',
   WALLET = 'wallet',
-  // extiende según tu sistema de pagos...
 }
 
 // ---------- INTERFACES ----------
 export type GeoPoint = { type: 'Point'; coordinates: [number, number] }; // [lng, lat]
-
-// ---------- TRANSFORMERS ----------
-export const DecimalTransformer: ValueTransformer = {
-  to: (value?: number | null) => value,
-  from: (value?: string | null) =>
-    value === null || value === undefined ? null : Number(value),
-};
 
 // ---------- ENTITY ----------
 @Entity({ name: 'trips' })
@@ -52,6 +52,9 @@ export const DecimalTransformer: ValueTransformer = {
 @Index('idx_trips_driver', ['driver'])
 @Index('idx_trips_vehicle', ['vehicle'])
 @Index('idx_trips_requested_at', ['requestedAt'])
+@Index('idx_trips_req_vehicle_category', ['requestedVehicleCategory'])
+@Index('idx_trips_req_service_class', ['requestedServiceClass'])
+@Index('idx_trips_est_vehicle_type', ['estimateVehicleType'])
 export class Trip {
   @PrimaryGeneratedColumn('uuid', { name: '_id' })
   id: string;
@@ -76,6 +79,45 @@ export class Trip {
   @JoinColumn({ name: 'order_id' })
   order?: Order | null;
 
+  // Relacion inversa con trip_stops
+  @OneToMany(() => TripStop, (ts) => ts.trip)
+  stops: TripStop[];
+
+  // Relacion inversa con trip_events
+  @OneToMany(() => TripEvent, (te) => te.trip)
+  events: TripEvent[];
+
+  // relacion inversa con trip_assignment
+  @OneToMany(() => TripAssignment, (ta) => ta.trip)
+  assignments: TripAssignment[];
+
+  /**
+   * Preferencia del pasajero: categoría física (Auto, Moto, Van, …)
+   * Se usa para filtrar matching en Fase 2.
+   */
+  @ManyToOne(() => VehicleCategory, { nullable: true, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'requested_vehicle_category_id' })
+  requestedVehicleCategory?: VehicleCategory | null;
+
+  /**
+   * Preferencia del pasajero: clase de servicio (Standard, Premium, …)
+   * Se usa para filtrar matching y para multiplicadores del estimate.
+   */
+  @ManyToOne(() => VehicleServiceClass, {
+    nullable: true,
+    onDelete: 'RESTRICT',
+  })
+  @JoinColumn({ name: 'requested_service_class_id' })
+  requestedServiceClass?: VehicleServiceClass | null;
+
+  /**
+   * Tipo de vehículo base elegido para calcular el estimate (snapshot).
+   * No es el vehículo real asignado. Útil para reproducir el precio mostrado.
+   */
+  @ManyToOne(() => VehicleType, { nullable: true, onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'estimate_vehicle_type_id' })
+  estimateVehicleType?: VehicleType | null;
+
   @Column({
     name: 'payment_mode',
     type: 'enum',
@@ -90,6 +132,16 @@ export class Trip {
     default: TripStatus.PENDING,
   })
   currentStatus: TripStatus;
+
+  @Column({
+    name: 'fare_estimated_total',
+    type: 'numeric',
+    precision: 10,
+    scale: 2,
+    nullable: true,
+    transformer: DecimalTransformer,
+  })
+  fareEstimatedTotal?: number | null;
 
   @Column({ name: 'requested_at', type: 'timestamptz' })
   requestedAt: Date;
@@ -119,7 +171,7 @@ export class Trip {
     spatialFeatureType: 'Point',
     srid: 4326,
   })
-  pickupPoint: GeoPoint;
+  pickupPoint: Point;
 
   @Column({ name: 'pickup_address', type: 'text', nullable: true })
   pickupAddress?: string | null;
@@ -159,6 +211,7 @@ export class Trip {
     precision: 6,
     scale: 3,
     default: 1.0,
+    nullable: true,
     transformer: DecimalTransformer,
   })
   fareSurgeMultiplier: number;
