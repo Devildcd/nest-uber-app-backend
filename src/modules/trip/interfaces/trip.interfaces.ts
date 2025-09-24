@@ -1,13 +1,52 @@
 import { PaymentMode, TripStatus } from '../entities/trip.entity';
 
 export interface FareBreakdown {
-  base_fare?: number;
-  distance_fare?: number;
-  time_fare?: number;
-  surge_multiplier?: number;
+  // ===== base del cálculo (valores *ya* multiplicados por service class) =====
+  base_fare: number; // base final usada en el subtotal
+  cost_per_km: number; // tarifa por km final usada
+  cost_per_minute: number; // tarifa por minuto final usada
+  min_fare: number; // mínimo final aplicado
+
+  // ===== multiplicadores de la service class (para auditoría) =====
+  applied_multipliers: {
+    base: number; // base_fare_multiplier
+    per_km: number; // cost_per_km_multiplier
+    per_min: number; // cost_per_minute_multiplier
+    min_fare: number; // min_fare_multiplier
+  };
+
+  // ===== métricas del estimate =====
+  distance_km_est: number; // ej. haversine encadenado
+  duration_min_est: number; // ej. dist/vel * 60
+
+  // ===== totales de estimate (pre cierre) =====
+  subtotal: number; // base + perKm*dist + perMin*dur
+  total: number; // max(subtotal, min_fare)
+  surge_multiplier: number; // por ahora 1.0 si no aplica
+
+  // ===== opcional: metadatos del snapshot =====
+  vehicle_type_id?: string;
+  service_class_id?: string;
+  category_id?: string;
+
+  vehicle_type_name: string;
+  service_class_name: string;
+  category_name: string;
+
+  // ===== opcional: para UI / pricing futuro =====
+  booking_fee?: number; // si luego lo agregas
   discounts?: number;
   waiting_time_minutes?: number;
-  // agrega campos internos si necesitas
+}
+
+function round2(x: number) {
+  return Number(x.toFixed(2));
+}
+function round3(x: number) {
+  return Number(x.toFixed(3));
+}
+function round4(x: number) {
+  return Number(x.toFixed(4));
 }
 
 /** Proyección ligera para listados (mejor performance que cargar relaciones) */

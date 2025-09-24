@@ -1,5 +1,5 @@
-import { PaymentMode, TripStatus } from '../entities/trip.entity';
-import { FareBreakdown } from '../interfaces/trip.interfaces';
+import { PaymentMode, TripStatus } from '../../entities/trip.entity';
+import { FareBreakdown } from '../../interfaces/trip.interfaces';
 
 export class TripResponseDto {
   id!: string;
@@ -8,9 +8,15 @@ export class TripResponseDto {
   driverId?: string | null;
   vehicleId?: string | null;
   orderId?: string | null;
+  requestedVehicleCategoryId!: string;
+  requestedVehicleCategoryName?: string | null;
+
+  requestedServiceClassId!: string;
+  requestedServiceClassName?: string | null;
 
   currentStatus!: TripStatus;
   paymentMode!: PaymentMode;
+  fareEstimatedTotal?: number | null;
 
   requestedAt!: string;
   acceptedAt?: string | null;

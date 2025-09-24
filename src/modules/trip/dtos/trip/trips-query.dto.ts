@@ -8,7 +8,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
-import { PaymentMode, TripStatus } from '../entities/trip.entity';
+import { PaymentMode, TripStatus } from '../../entities/trip.entity';
 
 export class TripsQueryDto {
   @IsOptional()
@@ -43,6 +43,13 @@ export class TripsQueryDto {
   @IsOptional()
   @IsEnum(PaymentMode)
   paymentMode?: PaymentMode;
+  @IsOptional()
+  @IsUUID()
+  vehicleCategoryId?: string; // requestedVehicleCategory
+
+  @IsOptional()
+  @IsUUID()
+  serviceClassId?: string; // requestedServiceClass
 
   // rangos útiles
   @IsOptional()
