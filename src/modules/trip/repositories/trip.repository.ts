@@ -90,6 +90,29 @@ export class TripRepository extends BaseRepository<Trip> {
     }
   }
 
+  /** Lock FOR UPDATE y devuelve la fila. */
+  async lockByIdForUpdate(
+    id: string,
+    manager: EntityManager,
+  ): Promise<Trip | null> {
+    const repo = this.scoped(manager);
+    try {
+      return await repo
+        .createQueryBuilder('t')
+        .setLock('pessimistic_write')
+        .where('t.id = :id', { id })
+        .getOne();
+    } catch (err) {
+      handleRepositoryError(
+        this.logger,
+        err,
+        'lockByIdForUpdate',
+        this.entityName,
+      );
+      throw err;
+    }
+  }
+
   /** get con lock pesimista (para transiciones) */
   async findByIdForUpdate(
     id: string,
@@ -111,6 +134,25 @@ export class TripRepository extends BaseRepository<Trip> {
         this.entityName,
       );
     }
+  }
+
+  async findActiveByDriver(driverId: string): Promise<Trip | null> {
+    const active: TripStatus[] = [
+      TripStatus.PENDING,
+      TripStatus.ASSIGNING,
+      TripStatus.ACCEPTED,
+      TripStatus.ARRIVING,
+      TripStatus.IN_PROGRESS,
+    ];
+    const qb = this.qb('t')
+      .leftJoinAndSelect('t.passenger', 'passenger')
+      .leftJoinAndSelect('t.vehicle', 'vehicle')
+      .where('t.driver_id = :did', { did: driverId })
+      .andWhere('t.current_status IN (:...st)', { st: active })
+      .orderBy('t.requested_at', 'DESC')
+      .limit(1);
+
+    return this.getOneSafe(qb, 'findActiveByDriver');
   }
 
   /** Listado paginado con ENTIDADES */
@@ -390,6 +432,33 @@ export class TripRepository extends BaseRepository<Trip> {
         .execute();
     } catch (err) {
       handleRepositoryError(this.logger, err, 'completeTrip', this.entityName);
+    }
+  }
+
+  async moveToNoDriversFoundWithLock(
+    id: string,
+    at: Date,
+    manager: EntityManager,
+  ): Promise<void> {
+    const repo = this.scoped(manager);
+    try {
+      await repo
+        .createQueryBuilder()
+        .update()
+        .set({ currentStatus: TripStatus.NO_DRIVERS_FOUND } as any)
+        .where('id = :id', { id })
+        .andWhere('current_status IN (:...st)', {
+          st: [TripStatus.ASSIGNING, TripStatus.PENDING],
+        })
+        .execute();
+    } catch (err) {
+      handleRepositoryError(
+        this.logger,
+        err,
+        'moveToNoDriversFoundWithLock',
+        this.entityName,
+      );
+      throw err;
     }
   }
 

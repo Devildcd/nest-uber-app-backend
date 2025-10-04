@@ -26,7 +26,14 @@ export class WalletMovementsRepository extends Repository<WalletMovement> {
    */
   async createAndSave(
     manager: EntityManager,
-    movementLike: DeepPartial<WalletMovement>,
+    params: {
+      walletId: string;
+      amount: number;
+      previousBalance: number;
+      newBalance: number;
+      transactionId?: string | null;
+      note?: string;
+    },
   ): Promise<WalletMovement> {
     if (!manager) {
       throw new BadRequestException(
@@ -41,7 +48,14 @@ export class WalletMovementsRepository extends Repository<WalletMovement> {
     }
     // create movement
     const movementRepo = manager.getRepository(WalletMovement);
-    const movement = movementRepo.create(movementLike);
+    const movement = movementRepo.create({
+      wallet: { id: params.walletId } as any,
+      amount: params.amount,
+      newBalance: params.newBalance,
+      previousBalance: params.previousBalance,
+      transactionId: params.transactionId ?? null,
+      note: params.note ?? null,
+    } as DeepPartial<WalletMovement>);
     try {
       return await movementRepo.save(movement);
     } catch (err) {
@@ -68,5 +82,15 @@ export class WalletMovementsRepository extends Repository<WalletMovement> {
         this.entityName,
       );
     }
+  }
+  /**
+   * Último movimiento del wallet del driver.
+   */
+  async findLastByDriverId(driverId: string): Promise<WalletMovement | null> {
+    return this.createQueryBuilder('m')
+      .innerJoin('m.wallet', 'w', 'w.driverId = :driverId', { driverId })
+      .orderBy('m.createdAt', 'DESC')
+      .limit(1)
+      .getOne();
   }
 }

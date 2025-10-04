@@ -2,6 +2,7 @@ import {
   forwardRef,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { DriverAvailabilityRepository } from '../repositories/driver-availability.repository';
@@ -24,9 +25,21 @@ import { DriverBalanceRepository } from 'src/modules/driver_balance/repositories
 import { UserStatus, UserType } from 'src/modules/user/entities/user.entity';
 import { VehicleStatus } from 'src/modules/vehicles/entities/vehicle.entity';
 import { DriverStatus } from 'src/modules/driver-profiles/entities/driver-profile.entity';
+import { UpsertDriverAvailabilityDto } from '../dtos/driver-availability-upsert.dto';
+import { UpdateDriverStatusDto } from '../dtos/update-status.dto';
+import { UpdateDriverLocationDto } from '../dtos/update-location.dto';
+import { UpdateDriverTripDto } from '../dtos/update-trip.dto';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  DriverAvailabilityEvents,
+  LocationUpdatedEvent,
+  StatusUpdatedEvent,
+  TripUpdatedEvent,
+} from '../../../core/domain/events/driver-availability.events';
 
 @Injectable()
 export class DriverAvailabilityService {
+  private readonly logger = new Logger(DriverAvailabilityService.name);
   constructor(
     private readonly dataSource: DataSource,
     private readonly driverAvailabilityRepo: DriverAvailabilityRepository,
@@ -34,6 +47,7 @@ export class DriverAvailabilityService {
     private readonly driverProfilesRepo: DriverProfileRepository,
     private readonly vehiclesRepo: VehicleRepository,
     private readonly driverBalanceRepo: DriverBalanceRepository,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   async findAll(
@@ -287,6 +301,61 @@ export class DriverAvailabilityService {
     );
     return toDriverAvailabilityResponseDto(saved);
   }
+
+  /**
+   * Llamada al completar un viaje:
+   * - libera current_trip_id
+   * - si está online, re-evalúa elegibilidad ⇒ set is_available_for_trips & reason
+   */
+  async onTripEnded(
+    driverId: string,
+    currentVehicleId: string | null,
+    manager?: EntityManager,
+  ): Promise<void> {
+    // 1) Lock (consistencia)
+    const av = await this.driverAvailabilityRepo.lockDriverForUpdate(
+      driverId,
+      manager,
+    );
+    if (!av) return;
+
+    // 2) Limpiar el current_trip_id con el método del repo (NO uses updateStatusByDriverId para esto)
+    await this.driverAvailabilityRepo.clearCurrentTripByDriverId(
+      driverId,
+      manager,
+    );
+
+    // 3) Recalcular flags de disponibilidad
+    let isAvailableForTrips = false;
+    let reason: AvailabilityReason | null = AvailabilityReason.OFFLINE;
+
+    if (av.isOnline) {
+      const { ok } = await this.checkOperationalEligibility(
+        driverId,
+        currentVehicleId,
+        manager,
+      );
+      isAvailableForTrips = !!ok;
+      reason = ok ? null : AvailabilityReason.UNAVAILABLE;
+    } else {
+      isAvailableForTrips = false;
+      reason = AvailabilityReason.OFFLINE;
+    }
+
+    // 4) Actualizar SOLO los campos permitidos por updateStatusByDriverId
+    await this.driverAvailabilityRepo.updateStatusByDriverId(
+      driverId,
+      {
+        isOnline: av.isOnline,
+        isAvailableForTrips,
+        availabilityReason: reason,
+        lastPresenceTimestamp: new Date(),
+        // <- NO currentTripId aquí
+      },
+      manager,
+    );
+  }
+
   // ****
 
   /**
@@ -352,6 +421,208 @@ export class DriverAvailabilityService {
 
     const ok = userOk && profileOk && walletActive && vehicleOk;
     return { ok, vehicleId };
+  }
+
+  // DETAIL by driverId
+  async findByDriver(driverId: string): Promise<DriverAvailabilityResponseDto> {
+    const row = await this.driverAvailabilityRepo.findByDriverId(driverId, [
+      'driver',
+      'currentTrip',
+      'currentVehicle',
+    ]);
+    if (!row)
+      throw new NotFoundException(
+        `DriverAvailability for ${driverId} not found`,
+      );
+    return toDriverAvailabilityResponseDto(row);
+  }
+
+  // NEARBY (matching simple)
+  async findNearby(
+    lat: number,
+    lng: number,
+    radiusMeters = 2000,
+    limit = 50,
+    ttlSeconds = 90,
+  ) {
+    // repo espera lon/lat
+    const list = await this.driverAvailabilityRepo.findNearbyAvailable(
+      lng,
+      lat,
+      radiusMeters,
+      limit,
+      ttlSeconds,
+    );
+    return list.map(toDriverAvailabilityResponseDto);
+  }
+
+  // UPSERT (idempotente)
+  async upsert(
+    dto: UpsertDriverAvailabilityDto,
+  ): Promise<DriverAvailabilityResponseDto> {
+    // construimos el patch igual que en create(), pero SIN validar toda la elegibilidad (Fase 1: estable http)
+    const patch: any = {};
+    if (dto.isOnline !== undefined) patch.isOnline = dto.isOnline;
+    if (dto.isAvailableForTrips !== undefined)
+      patch.isAvailableForTrips = dto.isAvailableForTrips;
+    if (dto.lastLocation)
+      patch.lastLocation = toGeoPoint(
+        dto.lastLocation.lat,
+        dto.lastLocation.lng,
+      );
+    if (dto.lastLocationTimestamp)
+      patch.lastLocationTimestamp = new Date(dto.lastLocationTimestamp);
+    if (dto.lastOnlineTimestamp)
+      patch.lastOnlineTimestamp = new Date(dto.lastOnlineTimestamp);
+    if (dto.currentTripId !== undefined)
+      patch.currentTripId = dto.currentTripId;
+    if (dto.currentVehicleId !== undefined)
+      patch.currentVehicleId = dto.currentVehicleId;
+    if (dto.isOnline) patch.lastPresenceTimestamp = new Date();
+
+    const saved = await this.driverAvailabilityRepo.upsertByDriverId(
+      dto.driverId,
+      patch,
+    );
+    return toDriverAvailabilityResponseDto(saved);
+  }
+
+  // STATUS (online/available/reason)
+  async updateStatus(
+    driverId: string,
+    dto: UpdateDriverStatusDto,
+  ): Promise<DriverAvailabilityResponseDto> {
+    const saved = await this.driverAvailabilityRepo.updateStatusByDriverId(
+      driverId,
+      dto,
+    );
+    const snapshot = toDriverAvailabilityResponseDto(saved);
+
+    this.eventEmitter.emit(DriverAvailabilityEvents.StatusUpdated, {
+      at: new Date().toISOString(),
+      snapshot,
+    } as StatusUpdatedEvent);
+
+    return snapshot;
+  }
+
+  async markOnlineFromLogin(driverId: string, atIso: string) {
+    await this.driverAvailabilityRepo.ensureForDriver(driverId, {});
+    const current = await this.driverAvailabilityRepo.findByDriverId(driverId);
+    if (!current)
+      throw new NotFoundException(
+        `DriverAvailability for ${driverId} not found`,
+      );
+
+    const isOnTrip = !!current.currentTripId;
+
+    let eligible = false;
+
+    if (!isOnTrip) {
+      const elig = await this.checkOperationalEligibility(
+        driverId,
+        current.currentVehicleId ?? null, // ← usamos el asignado, no auto-elegimos
+      );
+      eligible = !!elig.ok; // si no hay vehículo asignado o no es válido ⇒ false
+    }
+
+    const patch: Partial<DriverAvailability> = {
+      isOnline: true,
+      lastOnlineTimestamp: new Date(atIso),
+      lastPresenceTimestamp: new Date(),
+    };
+
+    if (isOnTrip) {
+      patch.isAvailableForTrips = false;
+      patch.availabilityReason = AvailabilityReason.ON_TRIP;
+    } else if (eligible) {
+      patch.isAvailableForTrips = true;
+      patch.availabilityReason = null as any; // disponible ⇒ razón NULL
+      // NO tocamos currentVehicleId aquí; lo gestiona el admin en otro flujo
+    } else {
+      patch.isAvailableForTrips = false;
+      patch.availabilityReason = AvailabilityReason.UNAVAILABLE;
+    }
+
+    const saved = await this.driverAvailabilityRepo.updateStatusByDriverId(
+      driverId,
+      patch,
+    );
+    const snapshot = toDriverAvailabilityResponseDto(saved);
+
+    this.eventEmitter.emit(DriverAvailabilityEvents.StatusUpdated, {
+      at: new Date().toISOString(),
+      snapshot,
+    });
+
+    return snapshot;
+  }
+
+  // LOCATION ping
+  async updateLocation(
+    driverId: string,
+    dto: UpdateDriverLocationDto,
+  ): Promise<DriverAvailabilityResponseDto> {
+    const patch = {
+      lastLocation: toGeoPoint(dto.lat, dto.lng),
+      lastLocationTimestamp: dto.lastLocationTimestamp
+        ? new Date(dto.lastLocationTimestamp)
+        : undefined,
+      lastPresenceTimestamp: new Date(),
+    };
+    const saved = await this.driverAvailabilityRepo.updateLocationByDriverId(
+      driverId,
+      patch,
+    );
+    const snapshot = toDriverAvailabilityResponseDto(saved);
+
+    this.eventEmitter.emit(DriverAvailabilityEvents.LocationUpdated, {
+      at: new Date().toISOString(),
+      snapshot,
+    } as LocationUpdatedEvent);
+
+    return snapshot;
+  }
+
+  // SET/UNSET currentTripId
+  async setOrClearTrip(
+    driverId: string,
+    dto: UpdateDriverTripDto,
+  ): Promise<DriverAvailabilityResponseDto> {
+    const saved = dto.currentTripId
+      ? await this.driverAvailabilityRepo.setCurrentTripByDriverId(
+          driverId,
+          dto.currentTripId,
+        )
+      : await this.driverAvailabilityRepo.clearCurrentTripByDriverId(driverId);
+
+    const snapshot = toDriverAvailabilityResponseDto(saved);
+
+    this.eventEmitter.emit(DriverAvailabilityEvents.TripUpdated, {
+      at: new Date().toISOString(),
+      snapshot,
+    } as TripUpdatedEvent);
+
+    // opcional: también avisar cambio de estado
+    this.eventEmitter.emit(DriverAvailabilityEvents.StatusUpdated, {
+      at: new Date().toISOString(),
+      snapshot,
+    } as StatusUpdatedEvent);
+
+    return snapshot;
+  }
+
+  // SOFT DELETE
+  async softDelete(driverId: string): Promise<void> {
+    await this.driverAvailabilityRepo.softDeleteByDriverId(driverId);
+  }
+
+  private emitSafely<T = any>(eventName: string, payload: T) {
+    try {
+      this.eventEmitter.emit(eventName, payload);
+    } catch (e) {
+      this.logger.debug(`Event emit failed (${eventName})`, e);
+    }
   }
 }
 

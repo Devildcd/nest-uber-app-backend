@@ -87,3 +87,19 @@ export interface FindNearbyAvailableParams {
   radiusMeters?: number; // default sugerido: 2000
   limit?: number; // default sugerido: 50
 }
+
+export interface FindEligibleDriversParams {
+  pickup: { lat: number; lng: number };
+  radiusMeters: number;
+  limit: number;
+  // Filtros de compatibilidad
+  vehicleCategoryId?: string | null;
+  serviceClassId?: string | null;
+  // Evitar re-intentos para el mismo trip
+  excludeAlreadyTriedForTripId?: string;
+  // Requisitos operativos
+  requireWalletActive?: boolean;
+  requireVehicleInService?: boolean;
+  // Frescura de presencia
+  ttlSeconds?: number; // default 90
+}

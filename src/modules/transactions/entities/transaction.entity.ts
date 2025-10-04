@@ -23,7 +23,7 @@ export enum TransactionType {
   PENALTY = 'penalty',
   REFUND = 'refund',
   PLAN_PURCHASE = 'plan_purchase',
-  PLATFORM_COMMISSION = 'PLATFORM_COMMISSION',
+  PLATFORM_COMMISSION = 'platform_comission',
 }
 
 export enum TransactionStatus {

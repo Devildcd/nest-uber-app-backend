@@ -3,62 +3,56 @@ import {
   PrimaryGeneratedColumn,
   Column,
   Index,
-  UpdateDateColumn,
+  ManyToOne,
+  JoinColumn,
   CreateDateColumn,
+  UpdateDateColumn,
+  Check,
+  Unique,
 } from 'typeorm';
+import { City } from './city.entity';
 
-@Entity({ name: 'zones' })
-@Index('idx_zones_city_code', ['cityCode'])
-@Index('idx_zones_active', ['isActive'])
-@Index('idx_zones_priority', ['priority'])
+@Entity({ name: 'zone' })
+@Unique('uq_zone_city_name', ['cityId', 'name'])
+@Check(`"priority" >= 0`)
 export class Zone {
-  @PrimaryGeneratedColumn('uuid', { name: 'id' })
-  id: string;
+  @PrimaryGeneratedColumn('uuid')
+  id!: string;
 
-  /** City code que matchea el usado en pricing_settings.scope_ref cuando scope_type = 'city' */
-  @Column('text', { name: 'city_code' })
-  cityCode: string;
+  @Index('idx_zone_city')
+  @Column({ type: 'uuid' })
+  cityId!: string;
 
-  @Column('text', { name: 'name' })
-  name: string;
+  @ManyToOne(() => City, { onDelete: 'RESTRICT' })
+  @JoinColumn({ name: 'cityId' })
+  city!: City;
 
-  /**
-   * Geometría de la zona.
-   * Requiere PostGIS habilitado. Usamos geography Polygon WGS84.
-   */
-  @Index('gix_zones_shape', { spatial: true })
+  @Index('idx_zone_name')
+  @Column({ type: 'text' })
+  name!: string;
+
+  @Column({ type: 'text', nullable: true })
+  kind?: string | null; // "aeropuerto", "centro", etc.
+
+  @Index('idx_zone_priority')
+  @Column({ type: 'int', default: 100 })
+  priority!: number;
+
+  // MULTIPOLYGON SRID 4326 obligatorio
   @Column({
-    type: 'geography',
-    name: 'shape',
-    spatialFeatureType: 'Polygon',
+    type: 'geometry',
+    spatialFeatureType: 'MultiPolygon',
     srid: 4326,
-    nullable: false,
   })
-  shape: string; // TypeORM representa geography como string.
+  geom!: string;
 
-  /**
-   * En caso de solaparse dos zonas, gana la de mayor prioridad.
-   * Puedes dejar null (misma prioridad) y desempatar por updated_at desc.
-   */
-  @Column('int', { name: 'priority', nullable: true })
-  priority?: number | null;
+  @Index('idx_zone_active')
+  @Column({ type: 'boolean', default: true })
+  active!: boolean;
 
-  @Column('boolean', { name: 'is_active', default: true })
-  isActive: boolean;
+  @CreateDateColumn({ type: 'timestamptz' })
+  createdAt!: Date;
 
-  /** Auditoría */
-  @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
-  createdAt: Date;
-
-  @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
-  updatedAt: Date;
+  @UpdateDateColumn({ type: 'timestamptz' })
+  updatedAt!: Date;
 }
-
-/**
- * NOTAS:
- * - Crea índice GIST sobre shape en migración (si tu versión de TypeORM no genera spatial index correcto):
- *   CREATE INDEX gix_zones_shape ON zones USING GIST (shape);
- *
- * - Si vas a consultar "zona que contiene punto": ST_Contains(shape, point).
- * - Cuando no haya match de zona, tu resolución de pricing cae a city o global.
- */

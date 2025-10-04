@@ -1,7 +1,7 @@
 import { SessionType } from '../entities/session.entity';
 
 export interface TokenPayload {
-  sub: string | number;
+  sub: string;
   [key: string]: unknown;
 }
 

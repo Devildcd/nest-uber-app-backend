@@ -1,7 +1,7 @@
 import { DynamicModule, Global, Module, Provider } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { SwaggerService } from './swagger.service';
-import { SwaggerOptions } from 'src/core/interfaces/swagger-options.interface';
+import { SwaggerOptions } from 'src/common/interfaces/swagger-options.interface';
 
 @Global()
 @Module({})

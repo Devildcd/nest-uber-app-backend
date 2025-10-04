@@ -13,7 +13,7 @@ import { Order } from './order.entity';
 import { DecimalTransformer } from 'src/common/validators/decimal.transformer';
 
 @Entity({ name: 'commission_adjustments' })
-@Unique('uq_comm_adj_order_seq', ['orderId', 'adjustmentSeq'])
+@Unique('uq_comm_adj_order_seq', ['order', 'adjustmentSeq'])
 export class CommissionAdjustment {
   @PrimaryGeneratedColumn('uuid')
   id: string;

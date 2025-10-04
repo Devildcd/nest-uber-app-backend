@@ -1,9 +1,18 @@
-import { IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import {
+  IsNumber,
+  IsOptional,
+  IsString,
+  isUUID,
+  IsUUID,
+  Min,
+} from 'class-validator';
 
 export class NormalRefundDto {
-  @IsOptional()
   @IsUUID()
-  adminId?: string;
+  adminId: string;
+
+  @IsUUID()
+  collectionPointId: string;
 
   @IsOptional()
   @IsString()

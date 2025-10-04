@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule as Ns } from '@nestjs/swagger';
-import { SwaggerOptions } from 'src/core/interfaces/swagger-options.interface';
+import { SwaggerOptions } from 'src/common/interfaces/swagger-options.interface';
 
 @Injectable()
 export class SwaggerService implements OnModuleInit {

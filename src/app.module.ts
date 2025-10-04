@@ -27,6 +27,8 @@ import { QueueModule } from './infrastructure/queue/queue.module';
 import { WsModule } from './infrastructure/ws/ws.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { CoreSettingsModule } from './modules/core-settings/core-settings.module';
+import { RealtimeModule } from './realtime/realtime.module';
+import { ScheduleModule } from '@nestjs/schedule';
 @Module({
   imports: [
     MailModule,
@@ -58,8 +60,11 @@ import { CoreSettingsModule } from './modules/core-settings/core-settings.module
       maxListeners: 20, // evita memory leaks
       newListener: false,
       removeListener: false,
+      global: true,
     }),
+    ScheduleModule.forRoot(),
     CoreSettingsModule,
+    RealtimeModule,
   ],
   controllers: [AppController],
   providers: [AppService, DatabaseConfigService],

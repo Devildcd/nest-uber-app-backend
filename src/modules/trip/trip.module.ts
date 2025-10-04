@@ -14,6 +14,12 @@ import { TripStopsRepository } from './repositories/trip-stops.repository';
 import { EventEmitterModule } from '@nestjs/event-emitter';
 import { CoreSettingsModule } from '../core-settings/core-settings.module';
 import { TripHelpersService } from './services/trip-helpers.service';
+import { TripAssignmentRepository } from './repositories/trip-assignment.repository';
+import { MatchingDomainGuards } from './domain/matching-domain-guards';
+import { DriversAvailabilityModule } from '../drivers-availability/drivers-availability.module';
+import { TripSnapshot } from './entities/trip-snapshot.entity';
+import { TripSnapshotRepository } from './repositories/trip-snapshot.repository';
+import { OrdersModule } from '../orders/orders.module';
 
 @Module({
   imports: [
@@ -24,9 +30,12 @@ import { TripHelpersService } from './services/trip-helpers.service';
       TripAssignment,
       TripEvent,
       TripStop,
+      TripSnapshot,
     ]),
     EventEmitterModule,
     CoreSettingsModule,
+    DriversAvailabilityModule,
+    OrdersModule,
   ],
   controllers: [TripController],
   providers: [
@@ -34,7 +43,11 @@ import { TripHelpersService } from './services/trip-helpers.service';
     TripRepository,
     TripEventsRepository,
     TripStopsRepository,
+    TripAssignmentRepository,
     TripHelpersService,
+    MatchingDomainGuards,
+    TripSnapshotRepository,
   ],
+  exports: [TripRepository, TripService],
 })
 export class TripModule {}

@@ -306,6 +306,8 @@ export class CashCollectionRecordRepository extends Repository<CashCollectionRec
   async createOffPlatformRefundNote(
     manager: EntityManager,
     params: {
+      collectionPointId: string;
+      transactionId: string;
       orderId?: string;
       driverId?: string | null;
       adminId: string;
@@ -326,12 +328,12 @@ export class CashCollectionRecordRepository extends Repository<CashCollectionRec
 
     const entity = repo.create({
       driver: params.driverId ? ({ id: params.driverId } as any) : null,
-      collectionPoint: undefined,
+      collectionPoint: { id: params.collectionPointId } as any,
+      transaction: { id: params.transactionId } as any,
       collectedBy: params.adminId ? ({ id: params.adminId } as any) : null,
       amount: 0,
       currency,
       status: CashCollectionStatus.COMPLETED,
-      transaction: undefined,
       notes: composedNoteParts.join(' | '),
     } as DeepPartial<CashCollectionRecord>);
 

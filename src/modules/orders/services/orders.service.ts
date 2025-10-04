@@ -45,6 +45,12 @@ import { CashCollectionRecordRepository } from 'src/modules/cash_colletions_poin
 import { AdjustCommissionDto } from '../dto/comission-adjustment.dto';
 import { CommissionAdjustment } from '../entities/comission-adjustment.entity';
 import { EventEmitter2 } from 'eventemitter2';
+import { handleRepositoryError } from 'src/common/utils/handle-repository-error';
+import { DriverBalance } from 'src/modules/driver_balance/entities/driver_balance.entity';
+import {
+  OrderEventType,
+  DomainEvent,
+} from '../interfaces/order-event-types.enum';
 
 const COMMISSION_RATE = 0.2; // 20% comisión plataforma
 
@@ -85,9 +91,11 @@ export class OrdersService {
         ),
       );
     }
+    // acumulador para eventos a emitir post-commit
+    const postCommitEvents: Array<{ name: string; payload: any }> = [];
 
     try {
-      return await this.dataSource.transaction(async (manager) => {
+      const result = await this.dataSource.transaction(async (manager) => {
         const { order, created } = await this.repo.createPendingForTrip(
           manager,
           {
@@ -99,48 +107,112 @@ export class OrdersService {
           },
         );
 
-        /*   if (created) {
-            this.events.emitOrderCreated(
-              new OrderCreatedEvent({
-                orderId: order.id,
-                tripId,
-                passengerId: dto.passengerId,
-                driverId: dto.driverId,
-                requestedAmount: amount,
-                paymentType: PaymentType.CASH,
-                currency: dto.currency ?? 'CUP',
-                note: dto.note,
-                createdAt: new Date().toISOString(),
-              }),
-            );
-          }*/
+        // CHG-EE-B: si se creó la orden en esta TX, construir evento AQUÍ
+        if (created) {
+          postCommitEvents.push({
+            name: OrderEventType.CREATED,
+            payload: {
+              orderId: order.id,
+              tripId,
+              passengerId: dto.passengerId,
+              driverId: dto.driverId,
+              requestedAmount: amount,
+              paymentType: PaymentType.CASH,
+              currency: order.currency,
+              createdAt: new Date().toISOString(),
+            },
+          });
+        }
 
-        return { order, created, currency: dto.currency ?? 'CUP' };
+        return { order, created };
       });
+      // post-commit: emitir eventos acumulados (si hay)
+      try {
+        for (const ev of postCommitEvents) {
+          this.events.emit(ev.name, ev.payload);
+          this.logger?.debug?.(
+            `Post-commit event: ${ev.name} -> ${JSON.stringify(ev.payload)}`,
+          );
+        }
+      } catch (emitErr) {
+        this.logger?.error?.('Failed to emit post-commit events', emitErr);
+      }
+
+      return result;
     } catch (error) {
       throw handleServiceError(
         this.logger,
         error,
-        `TripPaymentsService.createCashOrderOnTripClosure ${tripId}`,
+        `OrderService.createCashOrderOnTripClosure ${tripId}`,
       );
     }
   }
+
+  /**
+   * Paso 1 (TX): Crea (o reusa) la Order PENDING CASH al cerrar un Trip.
+   * - Idempotente por trip_id (índice único en repo.createPendingForTrip)
+   * - Deriva passengerId, driverId, requestedAmount y currency desde el Trip
+   * - NO emite eventos aquí (el caller externo decide post-commit)
+   */
+  async createCashOrderOnTripClosureTx(
+    manager: EntityManager,
+    tripId: string,
+    opts?: { currencyDefault?: string },
+  ): Promise<{ order: Order; created: boolean }> {
+    // 1) Leer trip
+    const trip = await manager.getRepository(Trip).findOne({
+      where: { id: tripId } as any,
+      relations: { passenger: true, driver: true },
+    });
+    if (!trip) throw new NotFoundException(`Trip ${tripId} not found`);
+
+    const passengerId = trip.passenger?.id ?? (trip as any).passengerId;
+    const driverId = trip.driver?.id ?? (trip as any).driverId ?? null;
+    if (!passengerId)
+      throw new BadRequestException('Trip has no passenger linked');
+    if (!driverId) throw new BadRequestException('Trip has no driver linked');
+
+    // 2) Monto y moneda
+    const rawFareTotal = trip.fareTotal;
+    if (
+      rawFareTotal == null ||
+      isNaN(Number(rawFareTotal)) ||
+      Number(rawFareTotal) <= 0
+    ) {
+      throw new BadRequestException(
+        formatErrorResponse(
+          'INVALID_REQUESTED_AMOUNT',
+          'fare_total inválido o no calculado en el trip.',
+          { tripId, fareTotal: rawFareTotal },
+        ),
+      );
+    }
+    const amount = toAmount(Number(rawFareTotal).toFixed(2));
+    const currency = (
+      trip.fareFinalCurrency ??
+      opts?.currencyDefault ??
+      'CUP'
+    ).toUpperCase();
+
+    // 3) Crear/obtener Order PENDING (idempotente por trip)
+    const { order, created } = await this.repo.createPendingForTrip(manager, {
+      tripId,
+      passengerId,
+      driverId,
+      requestedAmount: amount,
+      paymentType: PaymentType.CASH,
+      // currency, // descomenta si tu repo lo soporta
+    });
+
+    // si tu repo no guarda currency, persístela allí mismo según tu implementación
+    return { order, created };
+  }
+
   /**
    * Variante idempotente: si la Order ya estaba PAID, vuelve a aplicar
    * la comisión de forma idempotente y retorna alreadyPaid=true.
    */
   async confirmCashOrder(orderId: string, dto: ConfirmCashOrderDto) {
-    const commission = toAmount(dto.commissionAmount);
-    if (isNaN(commission)) {
-      throw new BadRequestException(
-        formatErrorResponse(
-          'INVALID_COMMISSION_AMOUNT',
-          'commissionAmount debe ser un decimal positivo.',
-          { commissionAmount: dto.commissionAmount },
-        ),
-      );
-    }
-    const currency = (dto.currency ?? 'CUP').toUpperCase();
     // acumulador para eventos que deben emitirse post-commit
     const postCommitEvents: Array<{ name: string; payload: any }> = [];
     try {
@@ -183,8 +255,11 @@ export class OrdersService {
           );
         }
 
-        // 2) Cálculos financieros (mantén la comisión enviada; si tu negocio quiere tasa fija, cámbialo aquí)
+        // 2) Cálculos financieros (calcula la comisión según jerarqía de commission_rate)
         const gross = _roundTo2(Number(fullOrder.requestedAmount));
+        //2.1 Calcular la comisión aplicable (busca que COMMISSION_RATE aplcar según jerarquí
+        // TO DO: 1. Campaign rate, 2. Driver plan rate, 3.	Global default
+        const commission = gross * COMMISSION_RATE;
         const net = _roundTo2(gross - commission);
         if (net < 0) {
           throw new BadRequestException(
@@ -204,7 +279,7 @@ export class OrdersService {
           gross,
           commission,
           net,
-          currency,
+          currency: fullOrder.currency ?? 'CUP',
           description: 'trip charge (cash)',
         });
 
@@ -214,10 +289,12 @@ export class OrdersService {
           fullOrder.driver.id,
           {
             tripId: fullOrder.trip.id,
+            orderId: fullOrder.id,
             commissionAmount: commission.toFixed(2),
-            currency,
+            platformFeeAmount: COMMISSION_RATE,
+            currency: fullOrder.currency ?? 'CUP',
             grossAmount: gross.toFixed(2), // para KPI si lo usas
-            note: dto.note ?? 'cash trip commission',
+            note: 'cash trip commission',
           } as any,
           manager,
         );
@@ -246,13 +323,13 @@ export class OrdersService {
           paidAt: (updated.paidAt ?? new Date()).toISOString(),
           confirmedBy: updated.confirmedBy!,
           commissionAmount: commission.toFixed(2),
-          currency,
+          currency: updated.currency,
           commissionTransactionId: applied.tx.id, // PLATFORM_COMMISSION
           walletMovementId: applied.movement.id, // movimiento enlazado a PLATFORM_COMMISSION
           previousBalance: Number(applied.movement.previousBalance).toFixed(2),
           newBalance: Number(applied.movement.newBalance).toFixed(2),
           // Opcional: si quieres exponer el CHARGE en la respuesta, añade aquí:
-          // chargeTransactionId: chargeTx.id,
+          //chargeTransactionId: chargeTx.id,
           alreadyPaid,
         };
       });
@@ -275,7 +352,7 @@ export class OrdersService {
       throw handleServiceError(
         this.logger,
         error,
-        `TripPaymentsService.confirmCashOrderIdempotent ${orderId}`,
+        `OrderService.confirmCashOrder ${orderId}`,
       );
     }
   }
@@ -579,25 +656,38 @@ export class OrdersService {
         const refundAmount = _roundTo2(Number(order.requestedAmount ?? 0)); // gross amount to refund
         const currency = order.currency ?? 'CUP';
 
+        // Cargar relaciones necesarias (trip, passenger, driver) usando findWithRelations con el mismo manager
+        const fullOrder = await this.repo.findWithRelations(
+          order.id,
+          ['trip', 'passenger', 'driver'],
+          undefined,
+          manager,
+        );
+        if (!fullOrder || !fullOrder.driver?.id) {
+          throw new NotFoundException(
+            formatErrorResponse(
+              'ORDER_RELATIONS_MISSING',
+              'Order is missing essential relations (driver) required for refund processing.',
+              { orderId, relations: ['driver'] },
+            ),
+          );
+        }
         // Prefer using txRepo helper if available; otherwise create directly
-        let refundTx: Transaction;
-        // fallback: create a Transaction entity directly
-        refundTx = manager.getRepository(Transaction).create({
-          type: TransactionType.REFUND,
-          orderId: order.id,
-          grossAmount: refundAmount,
-          netAmount: refundAmount,
-          currency,
+        const refundTx = await this.txRepo.createRefund(manager, {
+          orderId: fullOrder.id,
+          fromUserId: fullOrder.driver.id,
+          toUserId: fullOrder.passenger.id,
+          tripId: fullOrder.trip.id,
+          amount: refundAmount,
+          platformFeeAmount: 0,
+          currency: fullOrder.currency ?? 'CUP',
           description: `Immediate reversal for order ${order.id}`,
-          status: TransactionStatus.PROCESSED,
-          processedAt: new Date(),
           metadata: {
-            adminId: opts.adminId,
-            reason: opts.reason ?? 'immediate_reversal',
+            adminId: opts.adminId ?? null,
+            reason: 'commission_revert',
           },
-          toUser: order.driver ? ({ id: order.driver.id } as any) : null,
-        } as Partial<Transaction>);
-        refundTx = await manager.getRepository(Transaction).save(refundTx);
+          status: TransactionStatus.PROCESSED,
+        });
 
         // 7) Revert commission to driver wallet if applicable
         // Try to fetch the platform commission transaction for this order (txRepo helper recommended).
@@ -607,16 +697,16 @@ export class OrdersService {
           const platformCommissionTx =
             await this.txRepo.findPlatformCommissionByOrderId?.(
               manager,
-              order.id,
+              fullOrder.id,
             );
           const commissionAmount = platformCommissionTx
             ? _roundTo2(Number(platformCommissionTx.grossAmount ?? 0))
             : 0;
 
-          if (order.driver && commissionAmount > 0) {
+          if (fullOrder.driver && commissionAmount > 0) {
             // lock driver's wallet
             const wallet = await this.driverBalanceRepo
-              .lockByDriverId(order.driver.id, manager)
+              .lockByDriverId(manager, fullOrder.driver.id)
               .catch(() => null);
             if (!wallet) {
               // If wallet not found, decide policy: here we throw (consistent with earlier flows)
@@ -624,7 +714,7 @@ export class OrdersService {
                 formatErrorResponse(
                   'WALLET_NOT_FOUND',
                   'Driver wallet not found for commission revert',
-                  { driverId: order.driver.id },
+                  { driverId: fullOrder.driver.id },
                 ),
               );
             }
@@ -633,25 +723,21 @@ export class OrdersService {
             const newBal = _roundTo2(prev + commissionAmount);
 
             // Create counter-transaction for driver (could be type BONUS or REFUND depending on model)
-            let counterTx: Transaction;
-            counterTx = manager.getRepository(Transaction).create({
-              type: TransactionType.REFUND,
-              orderId: order.id,
-              toUser: { id: order.driver.id } as any,
-              grossAmount: commissionAmount,
+            const counterTx = await this.txRepo.createRefund(manager, {
+              orderId: fullOrder.id,
+              tripId: fullOrder.trip.id,
+              toUserId: fullOrder.driver.id,
+              amount: commissionAmount,
               currency,
-              description: `Commission revert for order ${order.id}`,
-              status: TransactionStatus.PROCESSED,
-              processedAt: new Date(),
+              platformFeeAmount: 0,
+              description: `Commission revert for order ${fullOrder.id} to driver ${fullOrder.driver.id}`,
               metadata: {
-                adminId: opts.adminId,
-                reason: opts.reason ?? 'commission_revert',
+                adminId: opts.adminId ?? null,
+                reason: 'commission_revert',
               },
-            } as Partial<Transaction>);
-            counterTx = await manager
-              .getRepository(Transaction)
-              .save(counterTx);
-
+              status: TransactionStatus.PROCESSED,
+            });
+            // Create WalletMovement (link to counterTx)
             // idempotency: check existing movement for this counterTx
             const existingMv = await this.movementRepo.findByTransactionId(
               counterTx.id,
@@ -666,7 +752,7 @@ export class OrdersService {
                 amount: commissionAmount, // credit to driver
                 previousBalance: prev,
                 newBalance: newBal,
-                note: `Commission revert (order ${order.id})`,
+                note: `Commission revert (order ${fullOrder.id})`,
               } as DeepPartial<WalletMovement>);
               const savedMv = await manager
                 .getRepository(WalletMovement)
@@ -684,7 +770,11 @@ export class OrdersService {
           }
         } catch (err) {
           // If commission revert fails we rollback whole tx (so throw)
-          throw err;
+          throw handleServiceError(
+            this.logger,
+            err,
+            `Commission revert fails:${orderId})`,
+          );
         }
 
         // 8) Update Order: set status -> PENDING, clear paidAt/confirmedBy, add metadata note about reversal
@@ -706,7 +796,7 @@ export class OrdersService {
       throw handleServiceError(
         this.logger,
         err,
-        `RefundsService.processImmediateRefund(orderId:${orderId})`,
+        `OrderService.processImmediateRefund(orderId:${orderId})`,
       );
     }
   }
@@ -723,7 +813,8 @@ export class OrdersService {
   async processNormalRefund(
     orderId: string,
     opts: {
-      adminId?: string;
+      adminId: string;
+      collectionPointId: string; // for CCR
       requestedBy?: string;
       reason?: string;
       amount?: number; // optional partial refund (business must allow)
@@ -800,13 +891,34 @@ export class OrdersService {
             };
           }
 
+          // 2) Cargar relaciones necesarias (trip, passenger, driver) usando findWithRelations con el mismo manager
+          const fullOrder = await this.repo.findWithRelations(
+            order.id,
+            ['trip', 'passenger', 'driver'],
+            undefined,
+            manager,
+          );
+          if (!fullOrder) {
+            // defensivo: debería ser raro porque loadAndLockOrder ya existía
+            throw new NotFoundException(
+              formatErrorResponse(
+                'ORDER_NOT_FOUND',
+                'Orden no encontrada tras lock.',
+                { orderId },
+              ),
+            );
+          }
+
           // 5) Create REFUND transaction (mark as PROCESSED for cash/off-platform accounting)
           const refundTx = await this.txRepo.createRefund(manager, {
-            orderId: order.id,
-            driverId: order.driver?.id ?? null,
+            orderId: fullOrder.id,
+            fromUserId: fullOrder.driver?.id ?? null,
+            tripId: fullOrder.trip.id,
+            toUserId: fullOrder.passenger.id,
             amount: requestedAmount,
-            currency: order.currency ?? 'CUP',
-            description: `Cash refund (off-platform) for order ${order.id}`,
+            platformFeeAmount: 0, // no platform fee on refunds
+            currency: fullOrder.currency ?? 'CUP',
+            description: `Cash refund (off-platform) for order ${fullOrder.id}`,
             metadata: {
               adminId: opts.adminId ?? opts.requestedBy ?? null,
               reason: opts.reason ?? 'cash_off_platform_refund',
@@ -817,11 +929,13 @@ export class OrdersService {
 
           // 6) Create CashCollectionRecord note (info for finance / off-platform payout)
           await this.ccrRepo.createOffPlatformRefundNote(manager, {
-            orderId: order.id,
-            driverId: order.driver?.id ?? null,
+            orderId: fullOrder.id,
+            transactionId: refundTx.id,
+            collectionPointId: opts.collectionPointId,
+            driverId: fullOrder.driver?.id ?? null,
             adminId: opts.adminId ?? opts.requestedBy ?? 'system',
             note: opts.reason ?? 'cash refund (off-platform)',
-            currency: order.currency ?? 'CUP',
+            currency: fullOrder.currency ?? 'CUP',
           });
 
           // 7) Revert commission to driver if applicable
@@ -830,23 +944,23 @@ export class OrdersService {
             const platformCommissionTx =
               await this.txRepo.findPlatformCommissionByOrderId(
                 manager,
-                order.id,
+                fullOrder.id,
               );
             const commissionAmount = platformCommissionTx
               ? _roundTo2(Number(platformCommissionTx.grossAmount ?? 0))
               : _roundTo2(Number((order as any).platformCommissionAmount ?? 0));
 
-            if (order.driver && commissionAmount > 0) {
+            if (fullOrder.driver && commissionAmount > 0) {
               // lock driver wallet row
               const wallet = await this.driverBalanceRepo
-                .lockByDriverId(order.driver.id, manager)
+                .lockByDriverId(manager, fullOrder.driver.id)
                 .catch(() => null);
               if (!wallet) {
                 throw new NotFoundException(
                   formatErrorResponse(
                     'WALLET_NOT_FOUND',
                     'Driver wallet not found for commission revert',
-                    { driverId: order.driver.id },
+                    { driverId: fullOrder.driver.id },
                   ),
                 );
               }
@@ -856,11 +970,13 @@ export class OrdersService {
 
               // create counter transaction for driver (REFUND / compensation) and mark PROCESSED
               const counterTx = await this.txRepo.createRefund(manager, {
-                orderId: order.id,
-                driverId: order.driver.id,
+                orderId: fullOrder.id,
+                toUserId: fullOrder.driver.id,
+                tripId: fullOrder.trip.id,
                 amount: commissionAmount,
-                currency: order.currency ?? 'CUP',
-                description: `Commission revert for order ${order.id}`,
+                platformFeeAmount: 0,
+                currency: fullOrder.currency ?? 'CUP',
+                description: `Commission revert for order ${fullOrder.id}`,
                 metadata: {
                   adminId: opts.adminId ?? null,
                   reason: 'commission_revert',
@@ -877,55 +993,35 @@ export class OrdersService {
                 walletMovementId = existingMv.id;
               } else {
                 // create wallet movement (use movementRepo helper if available)
-                // assumption: movementRepo.createAndSave(manager, walletId, amount, previousBalance, newBalance, opts)
-                if (
-                  typeof (this.movementRepo as any).createAndSave === 'function'
-                ) {
-                  const mv = await (this.movementRepo as any).createAndSave(
-                    manager,
-                    wallet.id,
-                    commissionAmount,
-                    prev,
-                    newBal,
-                    {
-                      transactionId: counterTx.id,
-                      note: `Commission revert (order ${order.id})`,
-                    },
-                  );
-                  walletMovementId = mv.id;
-                } else {
-                  // fallback: direct save using manager
-                  const movement = manager
-                    .getRepository('wallet_movement')
-                    .create({
-                      walletId: wallet.id,
-                      transactionId: counterTx.id,
-                      amount: commissionAmount,
-                      previousBalance: prev,
-                      newBalance: newBal,
-                      note: `Commission revert (order ${order.id})`,
-                    } as any);
-                  const savedMv = await manager
-                    .getRepository('wallet_movement')
-                    .save(movement);
-                  walletMovementId = (savedMv as any).id;
-                }
+                const mv = await this.movementRepo.createAndSave(manager, {
+                  walletId: wallet.id,
+                  transactionId: counterTx.id,
+                  amount: commissionAmount,
+                  previousBalance: prev,
+                  newBalance: newBal,
+                  note: `Commission revert (order ${fullOrder.id})`,
+                } as any);
+                walletMovementId = mv.id;
 
                 // update wallet balance
                 wallet.currentWalletBalance = newBal;
-                await manager.getRepository('driver_balance').save(wallet);
+                await manager.getRepository(DriverBalance).save(wallet);
               }
             }
           } catch (err) {
             // rollback transaction if commission revert fails
-            throw err;
+            throw handleServiceError(
+              this.logger,
+              err,
+              `Commission revert fails:${orderId})`,
+            );
           }
 
           // 8) Update Order: set to REFUNDED and add refund metadata
-          order.status = OrderStatus.REFUNDED;
-          (order as any).refundedAt = new Date();
-          order.metadata = {
-            ...(order.metadata ?? {}),
+          fullOrder.status = OrderStatus.REFUNDED;
+          (fullOrder as any).updatedAt = new Date();
+          fullOrder.metadata = {
+            ...(fullOrder.metadata ?? {}),
             lastRefund: {
               adminId: opts.adminId ?? opts.requestedBy ?? null,
               at: new Date().toISOString(),
@@ -935,7 +1031,7 @@ export class OrdersService {
             },
           };
 
-          await manager.getRepository('order').save(order);
+          await manager.getRepository(Order).save(fullOrder);
 
           // 9) Return summary; events/notifications should be emitted post-commit by caller
           return {
@@ -952,7 +1048,7 @@ export class OrdersService {
       throw handleServiceError(
         this.logger,
         err,
-        `RefundsService.processNormalRefund(orderId:${orderId})`,
+        `OrderService.processNormalRefund(orderId:${orderId})`,
       );
     }
   }
@@ -1022,7 +1118,7 @@ export class OrdersService {
           let originalFee = 0;
           if (order.paymentType === PaymentType.CASH) {
             originalFee =
-              await this.txRepo.getOriginalFeeFromCommissionDeduction(
+              await this.txRepo.getOriginalFeeFromPlatformCommission(
                 manager,
                 order.id,
               );
@@ -1124,6 +1220,23 @@ export class OrdersService {
             }
           }
 
+          const fullOrder = await this.repo.findWithRelations(
+            order.id,
+            ['trip', 'passenger', 'driver'],
+            undefined,
+            manager,
+          );
+          if (!fullOrder) {
+            // defensivo: debería ser raro porque loadAndLockOrder ya existía
+            throw new NotFoundException(
+              formatErrorResponse(
+                'ORDER_NOT_FOUND',
+                'Orden no encontrada tras lock.',
+                { orderId },
+              ),
+            );
+          }
+
           // 5) Construcción de la transacción contable (PENALTY si delta>0, BONUS si delta<0)
           const isPenalty = delta > 0;
           const absDelta = Math.abs(delta);
@@ -1132,10 +1245,14 @@ export class OrdersService {
           const txRepo = manager.getRepository(Transaction);
           const tx = txRepo.create({
             type: isPenalty ? TransactionType.PENALTY : TransactionType.BONUS,
-            order: { id: order.id } as any,
-            trip: order.trip ? ({ id: order.trip.id } as any) : null,
-            fromUser: isPenalty ? ({ id: order.driver?.id } as any) : undefined,
-            toUser: !isPenalty ? ({ id: order.driver?.id } as any) : undefined,
+            order: { id: fullOrder.id } as any,
+            trip: fullOrder.trip ? ({ id: fullOrder.trip.id } as any) : null,
+            fromUser: isPenalty
+              ? ({ id: fullOrder.driver?.id } as any)
+              : undefined,
+            toUser: !isPenalty
+              ? ({ id: fullOrder.driver?.id } as any)
+              : undefined,
             grossAmount: _roundTo2(absDelta),
             platformFeeAmount: 0,
             netAmount: _roundTo2(isPenalty ? -absDelta : absDelta),
@@ -1159,14 +1276,14 @@ export class OrdersService {
           // 6) Reflejar en wallet del driver (lock pessimistic_write)
           // Uso de driverBalanceRepo.lockByDriverId(manager, driverId) si tu repo lo expone (parece que sí)
           const wallet = await this.driverBalanceRepo
-            .lockByDriverId(order.driver.id, manager)
+            .lockByDriverId(manager, fullOrder.driver.id)
             .catch(() => null);
           if (!wallet) {
             throw new NotFoundException(
               formatErrorResponse(
                 'WALLET_NOT_FOUND',
                 'Driver wallet not found',
-                { driverId: order.driver.id },
+                { driverId: fullOrder.driver.id },
               ),
             );
           }
@@ -1175,7 +1292,7 @@ export class OrdersService {
               formatErrorResponse(
                 'WALLET_BLOCKED',
                 'Driver wallet is blocked',
-                { driverId: order.driver.id },
+                { driverId: fullOrder.driver.id },
               ),
             );
           }
@@ -1214,7 +1331,7 @@ export class OrdersService {
           // 8) Registrar snapshot idempotencia en commission_adjustments (manejar 23505 por carreras)
           try {
             const adj = caRepo.create({
-              order: { id: order.id } as any,
+              order: { id: fullOrder.id } as any,
               adjustmentSeq: dto.adjustmentSeq,
               deltaFee: _roundTo2(delta),
               originalFee,
@@ -1227,19 +1344,19 @@ export class OrdersService {
             eventsToEmit.push({
               name: 'wallet.updated',
               payload: {
-                driverId: order.driver.id,
+                driverId: fullOrder.driver.id,
                 balance: newBal,
                 at: now.toISOString(),
               },
             });
             eventsToEmit.push({
               name: 'transaction.processed',
-              payload: { transactionId: savedTx.id, orderId: order.id },
+              payload: { transactionId: savedTx.id, orderId: fullOrder.id },
             });
 
             const createdAt = savedAdj.createdAt;
             return {
-              orderId: order.id,
+              orderId: fullOrder.id,
               adjustmentSeq: savedAdj.adjustmentSeq,
               deltaApplied: _roundTo2(delta),
               originalFee,
@@ -1266,7 +1383,7 @@ export class OrdersService {
               });
               if (exist) {
                 return {
-                  orderId: order.id,
+                  orderId: fullOrder.id,
                   adjustmentId: exist.id,
                   adjustmentSeq: exist.adjustmentSeq,
                   deltaApplied: Number(exist.deltaFee),
@@ -1284,15 +1401,10 @@ export class OrdersService {
         },
       ); // end transaction
 
-      // Emit events post-commit if you have an emitter (OrdersService doesn't have one in your imports).
-      // You can wire an EventEmitter2 in the service constructor if desired. For now we log.
       try {
         // example: this.events.emit(...) if you have it
-        if ((eventsToEmit ?? []).length) {
-          // log events
-          this.logger.debug(
-            `Post-commit events: ${JSON.stringify(eventsToEmit)}`,
-          );
+        if ((eventsToEmit?.length ?? 0) > 0) {
+          this.emitPostCommitEvents(eventsToEmit);
         }
       } catch (err) {
         this.logger.error('Failed to emit post-commit events', err);
@@ -1341,5 +1453,29 @@ export class OrdersService {
       updatedAt: order.updatedAt?.toISOString(),
       deletedAt: order.deletedAt ? order.deletedAt.toISOString() : undefined,
     };
+  }
+
+  private emitPostCommitEvents(eventsToEmit: DomainEvent[]) {
+    if (!eventsToEmit?.length) return;
+
+    try {
+      for (const ev of eventsToEmit) {
+        // emite cada evento
+        this.events.emit(ev.name, ev.payload);
+        // log por evento
+        this.logger.debug(
+          `Post-commit event emitted: ${ev.name} -> ${JSON.stringify(ev.payload)}`,
+        );
+      }
+
+      // log resumen
+      this.logger.debug(
+        `Post-commit events: ${JSON.stringify(
+          eventsToEmit.map((e) => ({ name: e.name })),
+        )}`,
+      );
+    } catch (err) {
+      this.logger.error('Failed to emit post-commit events', err);
+    }
   }
 }

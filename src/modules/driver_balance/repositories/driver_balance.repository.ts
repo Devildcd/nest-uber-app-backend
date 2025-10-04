@@ -41,8 +41,8 @@ export class DriverBalanceRepository extends Repository<DriverBalance> {
    * - Finally we `findOne` with lock: { mode: 'pessimistic_write' } to lock the row
    */
   async lockByDriverId(
-    driverId: string,
     manager: EntityManager,
+    driverId: string,
   ): Promise<DriverBalance> {
     return manager
       .getRepository(DriverBalance)
@@ -105,7 +105,7 @@ export class DriverBalanceRepository extends Repository<DriverBalance> {
     changed: boolean;
     changedAt: Date;
   }> {
-    const wallet = await this.lockByDriverId(driverId, manager).catch(() => {
+    const wallet = await this.lockByDriverId(manager, driverId).catch(() => {
       throw new NotFoundException(
         formatErrorResponse(
           'WALLET_NOT_FOUND',

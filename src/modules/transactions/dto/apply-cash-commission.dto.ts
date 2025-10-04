@@ -18,6 +18,13 @@ export class ApplyCashCommissionDto {
   tripId!: string;
 
   @ApiProperty({
+    description: 'Order ID asociado a la comisión',
+    example: 'd4ec6e4f-3f23-4a6f-8b7a-0fa6b2fb2222',
+  })
+  @IsUUID('4')
+  orderId!: string;
+
+  @ApiProperty({
     description: 'Monto de la comisión (decimal, 2 dígitos). Positivo.',
     example: '25.50',
   })
@@ -25,6 +32,15 @@ export class ApplyCashCommissionDto {
   @IsNumberString()
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   commissionAmount!: string;
+
+  @ApiProperty({
+    description: 'Tasa de comisión aplicada (decimal, 4 dígitos). Positiva.',
+    example: '0.2',
+  })
+  @IsNotEmpty()
+  @IsNumberString()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+  platformFeeAmount!: string;
 
   @ApiPropertyOptional({
     description:
