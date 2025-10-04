@@ -14,10 +14,6 @@ export class WalletMovement {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Index()
-  @Column('uuid', { name: 'wallet_id' })
-  walletId: string;
-
   @ManyToOne(() => DriverBalance, (w) => w.movements, { onDelete: 'CASCADE' })
   wallet: DriverBalance;
 

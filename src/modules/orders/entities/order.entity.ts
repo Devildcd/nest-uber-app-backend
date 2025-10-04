@@ -9,6 +9,7 @@ import {
   UpdateDateColumn,
   DeleteDateColumn,
   Unique,
+  OneToOne,
 } from 'typeorm';
 import { User } from '../../user/entities/user.entity';
 import { Trip } from '../../trip/entities/trip.entity';
@@ -33,7 +34,7 @@ export class Order {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @ManyToOne(() => Trip, { nullable: false, onDelete: 'RESTRICT' })
+  @OneToOne(() => Trip, { nullable: false, onDelete: 'RESTRICT' })
   @JoinColumn({ name: 'trip_id' })
   trip: Trip;
 

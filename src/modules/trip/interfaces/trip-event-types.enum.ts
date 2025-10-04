@@ -1,8 +1,10 @@
 export enum TripEventType {
   TRIP_REQUESTED = 'trip_requested',
   DRIVER_ASSIGNED = 'driver_assigned',
+  DRIVER_OFFERED = 'driver_offered',
   DRIVER_ACCEPTED = 'driver_accepted',
   DRIVER_ARRIVED_PICKUP = 'driver_arrived_pickup',
+  DRIVER_EN_ROUTE = 'driver_en_route',
   TRIP_STARTED = 'trip_started',
   TRIP_COMPLETED = 'trip_completed',
   TRIP_CANCELED = 'trip_canceled',
@@ -16,4 +18,6 @@ export enum TripEventType {
   LOCATION_UPDATE = 'location_update',
   DISCOUNT_APPLIED = 'discount_applied',
   PENALTY_APPLIED = 'penalty_applied',
+  ASSIGNING_STARTED = 'assigning_started',
+  ASSIGNMENT_EXPIRED = 'assignment_expired',
 }

@@ -21,6 +21,13 @@ import {
 import { DeviceService } from 'src/modules/auth/services/device.service';
 import { UserRepository } from 'src/modules/user/repositories/user.repository';
 import * as argon2 from 'argon2';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import {
+  AuthEvents,
+  SessionRefreshedEvent,
+  SessionRevokedEvent,
+  UserLoggedInEvent,
+} from 'src/core/domain/events/auth.events';
 
 @Injectable()
 export class AuthService {
@@ -33,6 +40,7 @@ export class AuthService {
     private readonly sessionRepo: SessionRepository,
     private readonly deviceService: DeviceService,
     private readonly userRepository: UserRepository,
+    private readonly eventEmitter: EventEmitter2,
   ) {}
 
   /**
@@ -112,6 +120,19 @@ export class AuthService {
 
       await sessionRepo.save(newSession);
       await qr.commitTransaction();
+
+      // 👉 Evento de dominio post-commit
+      const ev: UserLoggedInEvent = {
+        userId: user.id,
+        userType: user.userType,
+        sid: jti,
+        sessionType,
+        at: new Date().toISOString(),
+        deviceInfo: context.device,
+        ipAddress: context.ip,
+        userAgent: context.userAgent,
+      };
+      this.eventEmitter.emit(AuthEvents.UserLoggedIn, ev);
 
       // 6) Devolver + cookie si WEB / API_CLIENT
       const baseResponse: any = {
@@ -227,17 +248,13 @@ export class AuthService {
         );
       });
 
-      // emitir evento para alertas / desconexiones WS
-      // try {
-      //   this.eventEmitter?.emit?.('session.revoked', {
-      //     sessionId: session.id,
-      //     userId: session.user?.id,
-      //     jti: session.jti,
-      //     reason: 'token_reuse_detected',
-      //   });
-      // } catch (e) {
-      //   this.logger.debug('Event emit failed (session.revoked)', e);
-      // }
+      // 🔔 Evento de dominio: sesión revocada por reuse/tampering
+      this.emitSafely<SessionRevokedEvent>(AuthEvents.SessionRevoked, {
+        userId: session.user?.id ?? payload.sub,
+        sid: session.jti,
+        reason: 'token_reuse_detected',
+        at: new Date().toISOString(),
+      });
 
       throw new UnauthorizedException('Refresh token inválido o revocado');
     }
@@ -288,6 +305,7 @@ export class AuthService {
       this.tokenService.createAccessToken(accessPayload);
 
     // 4) Actualizar la sesión con el nuevo jti/tokens y expiraciones
+    const oldSid = session.jti;
     session.jti = newJti;
     session.refreshTokenHash = await argon2.hash(refreshToken);
     session.refreshTokenExpiresAt = new Date(Date.now() + refreshTtl);
@@ -295,6 +313,14 @@ export class AuthService {
     session.lastActivityAt = new Date();
 
     await this.sessionRepo.save(session);
+
+    // 🔔 Evento de dominio: sesión refrescada (post-save)
+    this.emitSafely<SessionRefreshedEvent>(AuthEvents.SessionRefreshed, {
+      userId: user.id,
+      oldSid,
+      newSid: session.jti,
+      at: new Date().toISOString(),
+    });
 
     // 5) Preparar la respuesta base (timestamps en ms)
     const baseResponse: RefreshTokensResult = {
@@ -326,18 +352,6 @@ export class AuthService {
         // no queremos que un error al setear la cookie rompa el refresh
         this.logger.error('Failed to set refresh cookie', err);
       }
-
-      // Emitir evento de refresh (útil para auditoría / métricas)
-      // try {
-      //   this.eventEmitter?.emit?.('session.refreshed', {
-      //     sessionId: session.id,
-      //     userId: user.id,
-      //     jti: session.jti,
-      //   });
-      // } catch (e) {
-      //   this.logger.debug('Event emit failed (session.refreshed)', e);
-      // }
-
       return baseResponse;
     }
 
@@ -346,17 +360,6 @@ export class AuthService {
       ...baseResponse,
       refreshToken,
     };
-
-    // try {
-    //   this.eventEmitter?.emit?.('session.refreshed', {
-    //     sessionId: session.id,
-    //     userId: user.id,
-    //     jti: session.jti,
-    //   });
-    // } catch (e) {
-    //   this.logger.debug('Event emit failed (session.refreshed)', e);
-    // }
-
     return result;
   }
 
@@ -365,6 +368,7 @@ export class AuthService {
    */
   async logout(oldRefreshToken: string, res?: ExpressResponse): Promise<void> {
     let jti: string | undefined;
+    let sub: string | undefined;
 
     // 1) Intentamos extraer jti (si falla, seguimos para limpiar cookie)
     try {
@@ -373,6 +377,7 @@ export class AuthService {
           oldRefreshToken,
         );
       jti = payload.jti;
+      sub = payload.sub;
     } catch (err) {
       // No abortamos: puede venir un token malformado/expirado — igual queremos limpiar la cookie.
       this.logger.warn('Logout: refresh token verification failed', {
@@ -401,17 +406,13 @@ export class AuthService {
 
           await this.sessionRepo.save(session);
 
-          // Emitir evento para auditoría / notificaciones / invalidación en otros sistemas
-          // try {
-          //   this.eventEmitter?.emit?.('session.revoked', {
-          //     sessionId: session.id,
-          //     userId: session.user?.id,
-          //     jti: session.jti,
-          //     reason: 'user_logout',
-          //   });
-          // } catch (e) {
-          //   this.logger.debug('Logout: eventEmitter failed', e);
-          // }
+          // 🔔 Evento de dominio → el publisher desconectará sockets de session:{sid}
+          this.emitSafely<SessionRevokedEvent>(AuthEvents.SessionRevoked, {
+            userId: session.user?.id ?? sub,
+            sid: session.jti,
+            reason: 'user_logout',
+            at: new Date().toISOString(),
+          });
         } else {
           // sesión no encontrada: ya estaba revocada o nunca existió
           this.logger.debug('Logout: session not found for jti', { jti });
@@ -438,6 +439,14 @@ export class AuthService {
             : undefined,
         path: process.env.COOKIE_PATH ?? '/',
       });
+    }
+  }
+
+  private emitSafely<T = any>(eventName: string, payload: T) {
+    try {
+      this.eventEmitter.emit(eventName, payload);
+    } catch (e) {
+      this.logger.debug(`Event emit failed (${eventName})`, e);
     }
   }
 }

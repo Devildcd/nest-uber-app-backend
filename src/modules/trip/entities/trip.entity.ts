@@ -9,6 +9,7 @@ import {
   UpdateDateColumn,
   OneToMany,
   Point,
+  OneToOne,
 } from 'typeorm';
 
 import { User } from 'src/modules/user/entities/user.entity';
@@ -33,7 +34,7 @@ export enum TripStatus {
   COMPLETED = 'completed',
   CANCELLED = 'cancelled',
   NO_DRIVERS_FOUND = 'no_drivers_found',
-  DRIVER_REJECTED = 'driver_rejected',
+  // DRIVER_REJECTED = 'driver_rejected',
 }
 
 export enum PaymentMode {
@@ -75,7 +76,7 @@ export class Trip {
   vehicle?: Vehicle | null;
 
   // Orden de pago digital (opcional)
-  @ManyToOne(() => Order, { nullable: true, onDelete: 'SET NULL' })
+  @OneToOne(() => Order, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({ name: 'order_id' })
   order?: Order | null;
 

@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import * as cookieParser from 'cookie-parser';
 import { ApiResponseInterceptor } from './common/interceptors/api-response.interceptor';
 import { GlobalExceptionFilter } from './common/utils/postgres-exception.filter';
+import { SocketIoAdapter } from './realtime/adapters/socket-io.adapter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -17,6 +18,8 @@ async function bootstrap() {
   app.use(cookieParser());
 
   app.setGlobalPrefix('api');
+
+  app.useWebSocketAdapter(new SocketIoAdapter(app));
 
   const swagger = app.get(SwaggerService);
   swagger.setup(app);

@@ -1,11 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import {
-  IsUUID,
-  IsArray,
-  ArrayMinSize,
-  ValidateNested,
-  IsOptional,
-} from 'class-validator';
+import { IsUUID, IsArray, ArrayMinSize, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { TripEventCreateItemDto } from './trip-event-create-item.dto';
 

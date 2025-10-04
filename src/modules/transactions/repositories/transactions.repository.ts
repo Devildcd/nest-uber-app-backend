@@ -75,7 +75,7 @@ export class TransactionRepository extends Repository<Transaction> {
         throw new ConflictException(
           formatErrorResponse(
             'TX_CHARGE_MISMATCH',
-            'Existe un CHARGE para la order con importes distintos.',
+            'Existe un CHARGE para la orden con importes distintos.',
             {
               orderId: params.orderId,
               existing: {
@@ -108,7 +108,7 @@ export class TransactionRepository extends Repository<Transaction> {
       order: { id: params.orderId } as any,
       fromUser: { id: params.passengerId } as any,
       toUser: { id: params.driverId } as any,
-      tripId: { id: params.tripId } as any,
+      trip: { id: params.tripId } as any,
       grossAmount: r2(params.gross),
       platformFeeAmount: r2(params.commission),
       netAmount: r2(params.net),
@@ -134,15 +134,24 @@ export class TransactionRepository extends Repository<Transaction> {
       const repo = manager.getRepository(Transaction);
       const qb = repo
         .createQueryBuilder('t')
+        .select('t.gross_amount', 'fee')
         .where('t.order_id = :orderId', { orderId })
         .andWhere('t.type = :type', { type: TransactionType.CHARGE })
         .andWhere('t.status = :status', { status: TransactionStatus.PROCESSED })
-        .orderBy('t.created_at', 'ASC')
+        .orderBy('t.createdAt', 'ASC')
         .limit(1);
 
-      const tx = await qb.getOne();
-      return tx ? Number((tx as any).platformFeeAmount ?? 0) : 0;
+      const result = await qb.getRawOne();
+
+      // El resultado es { fee: 'valor_numerico_como_string' }
+      // Devolvemos 0 si no hay resultado, o el valor convertido a número
+      return result ? Number(result.fee) : 0;
     } catch (err) {
+      this.logger.error(
+        `[TransactionRepository] Fallo DB en getOriginalFeeFromCharge para OrderId ${orderId}`,
+        (err as Error).stack ?? err,
+        'TransactionRepository',
+      );
       handleRepositoryError(
         this.logger,
         err,
@@ -157,7 +166,7 @@ export class TransactionRepository extends Repository<Transaction> {
    * Devuelve la comisión original para CASH consultando la primera COMMISSION_DEDUCTION PROCESSED.
    * (la comisión en tu modelo está almacenada como grossAmount en ese tipo de tx).
    */
-  async getOriginalFeeFromCommissionDeduction(
+  async getOriginalFeeFromPlatformCommission(
     manager: EntityManager,
     orderId: string,
   ): Promise<number> {
@@ -165,21 +174,31 @@ export class TransactionRepository extends Repository<Transaction> {
       const repo = manager.getRepository(Transaction);
       const qb = repo
         .createQueryBuilder('t')
+        .select('t.gross_amount', 'fee')
         .where('t.order_id = :orderId', { orderId })
         .andWhere('t.type = :type', {
-          type: TransactionType.COMMISSION_DEDUCTION,
+          type: TransactionType.PLATFORM_COMMISSION,
         })
         .andWhere('t.status = :status', { status: TransactionStatus.PROCESSED })
-        .orderBy('t.created_at', 'ASC')
+        .orderBy('t.createdAt', 'ASC')
         .limit(1);
 
-      const tx = await qb.getOne();
-      return tx ? Number((tx as any).grossAmount ?? 0) : 0;
+      // 🚨 Usamos getRawOne() para obtener un objeto plano con la columna 'fee'
+      const result = await qb.getRawOne();
+
+      // El resultado es { fee: 'valor_numerico_como_string' }
+      // Devolvemos 0 si no hay resultado, o el valor convertido a número
+      return result ? Number(result.fee) : 0;
     } catch (err) {
+      this.logger.error(
+        `[TransactionRepository] Fallo DB en getOriginalFeeFromPlatformCommission para OrderId ${orderId}`,
+        (err as Error).stack ?? err,
+        'TransactionRepository',
+      );
       handleRepositoryError(
         this.logger,
         err,
-        'getOriginalFeeFromCommissionDeduction',
+        'getOriginalFeeFromPlatformCommission',
         this.entityName,
       );
       throw err;
@@ -394,17 +413,18 @@ export class TransactionRepository extends Repository<Transaction> {
     }
   }
   /**
-   * Busca una transacción PLATFORM_COMMISSION idempotente por (trip, fromUser).
+   * Busca una transacción PLATFORM_COMMISSION idempotente por (trip, order, fromUser).
    */
   async findExistingPlatformCommission(
     manager: EntityManager,
-    params: { driverId: string; tripId: string },
+    params: { driverId: string; tripId: string; orderId: string },
   ): Promise<Transaction | null> {
     return manager.getRepository(Transaction).findOne({
       where: {
         type: TransactionType.PLATFORM_COMMISSION,
         trip: { id: params.tripId } as any,
         fromUser: { id: params.driverId } as any,
+        order: { id: params.orderId } as any,
       },
     });
   }
@@ -412,14 +432,16 @@ export class TransactionRepository extends Repository<Transaction> {
    * Crea (o devuelve) una transacción de tipo PLATFORM_COMMISSION.
    * - Idempotente por (type=PLATFORM_COMMISSION, trip_id, from_user_id)
    * - Marca la transacción como PROCESSED y setea processedAt
-   * - Mapea commission => gross/net; platformFeeAmount=0
+   * - Mapea commission => gross/net; platformFeeAmount
    */
   async createPlatformCommission(
     manager: EntityManager,
     params: {
       driverId: string; // from_user_id (driver que debe la comisión)
       tripId: string; // trip_id asociado
+      orderId: string; //order_id asociado
       amount: number; // comisión positiva
+      platformFee: number; //commission rate aplicado
       currency: string; // ISO 4217 (debe coincidir con el wallet)
       description?: string; // ej: 'cash trip commission'
       metadata?: Record<string, any>;
@@ -431,10 +453,11 @@ export class TransactionRepository extends Repository<Transaction> {
     if (!isFinite(commission) || commission <= 0) {
       throw new ConflictException('La comisión debe ser un número positivo.');
     }
-    // 1) Idempotencia por (type, trip_id, from_user_id)
+    // 1) Idempotencia por (type, trip_id, from_user_id, order_id)
     const existing = await this.findExistingPlatformCommission(manager, {
       driverId: params.driverId,
       tripId: params.tripId,
+      orderId: params.orderId,
     });
 
     if (existing) {
@@ -465,10 +488,11 @@ export class TransactionRepository extends Repository<Transaction> {
     const tx = repo.create({
       type: TransactionType.PLATFORM_COMMISSION,
       trip: { id: params.tripId } as any,
+      order: { id: params.orderId } as any,
       fromUser: { id: params.driverId } as any,
       toUser: params.toUserId ? ({ id: params.toUserId } as any) : null,
       grossAmount: commission,
-      platformFeeAmount: 0,
+      platformFeeAmount: params.platformFee,
       netAmount: commission,
       currency: params.currency,
       status: TransactionStatus.PROCESSED,
@@ -485,6 +509,7 @@ export class TransactionRepository extends Repository<Transaction> {
         const again = await this.findExistingPlatformCommission(manager, {
           driverId: params.driverId,
           tripId: params.tripId,
+          orderId: params.orderId,
         });
         if (again) return again;
       }
@@ -563,40 +588,23 @@ export class TransactionRepository extends Repository<Transaction> {
     orderId: string,
   ): Promise<Transaction | null> {
     const repo = manager.getRepository(Transaction);
-
-    // 1) try direct lookup by order relation
-    const byOrder = await repo.findOne({
-      where: {
-        type: TransactionType.PLATFORM_COMMISSION,
-        order: { id: orderId } as any,
-      },
-      relations: ['order', 'trip'],
-    });
-    if (byOrder) return byOrder;
-
-    // 2) fallback: load order to get trip.id and search by trip (covers createPlatformCommission which sets trip)
     try {
-      // import Order locally to avoid circular imports at top-level if needed
-      const order = await manager.getRepository('order').findOne({
-        where: { id: orderId } as any,
-        relations: ['trip'],
-      });
-
-      const tripId = (order as any)?.trip?.id;
-      if (!tripId) return null;
-
-      const byTrip = await repo.findOne({
+      // 1) try direct lookup by order relation
+      const byOrder = await repo.findOne({
         where: {
           type: TransactionType.PLATFORM_COMMISSION,
-          trip: { id: tripId } as any,
+          order: { id: orderId } as any,
         },
-        relations: ['trip', 'order'],
+        relations: ['order'],
       });
-
-      return byTrip ?? null;
+      return byOrder;
     } catch (err) {
-      // If order lookup fails or no trip relation, just return null (caller will fallback to order.platformCommissionAmount)
-      return null;
+      handleRepositoryError(
+        this.logger,
+        err,
+        'findPlatformCommissionByOrderId',
+        this.entityName,
+      );
     }
   }
   /**
@@ -615,9 +623,12 @@ export class TransactionRepository extends Repository<Transaction> {
     manager: EntityManager,
     params: {
       orderId: string;
-      driverId?: string | null;
       amount: number;
+      platformFeeAmount: number;
       currency: string;
+      fromUserId?: string | null;
+      toUserId?: string | null;
+      tripId?: string | null;
       description?: string;
       metadata?: Record<string, any>;
       status?: TransactionStatus;
@@ -625,6 +636,7 @@ export class TransactionRepository extends Repository<Transaction> {
   ): Promise<Transaction> {
     const repo = manager.getRepository(Transaction);
     const amt = _roundTo2(params.amount);
+    const platformFee = _roundTo2(params.platformFeeAmount);
     if (!isFinite(amt) || amt <= 0) {
       throw new ConflictException('Refund amount must be a positive number.');
     }
@@ -632,9 +644,11 @@ export class TransactionRepository extends Repository<Transaction> {
     const tx = repo.create({
       type: TransactionType.REFUND,
       order: { id: params.orderId } as any,
-      toUser: params.driverId ? ({ id: params.driverId } as any) : null,
+      trip: params.tripId ? ({ id: params.tripId } as any) : null,
+      fromUser: params.fromUserId ? ({ id: params.fromUserId } as any) : null,
+      toUser: params.toUserId ? ({ id: params.toUserId } as any) : null,
       grossAmount: amt,
-      platformFeeAmount: 0,
+      platformFeeAmount: platformFee,
       netAmount: amt,
       currency: params.currency,
       status: params.status ?? TransactionStatus.PENDING,
@@ -711,8 +725,9 @@ export class TransactionRepository extends Repository<Transaction> {
     try {
       const tx = await this.createRefund(manager, {
         orderId,
-        driverId: params.driverId ?? null,
+        fromUserId: params.driverId ?? null,
         amount: params.amount,
+        platformFeeAmount: 0, // asumes full refund of gross/net, no fee refund
         currency: params.currency,
         description: params.description,
         metadata: params.metadata ?? undefined,

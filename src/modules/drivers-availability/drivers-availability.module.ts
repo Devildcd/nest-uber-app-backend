@@ -13,6 +13,7 @@ import { TransactionsModule } from '../transactions/transactions.module';
 import { CashColletionsPointsModule } from '../cash_colletions_points/cash_colletions_points.module';
 import { UserModule } from '../user/user.module';
 import { VehiclesModule } from '../vehicles/vehicles.module';
+import { PresenceSweeperJob } from '../../core/domain/jobs/presence-sweeper.job';
 
 @Module({
   imports: [
@@ -25,7 +26,11 @@ import { VehiclesModule } from '../vehicles/vehicles.module';
     forwardRef(() => VehiclesModule),
   ],
   controllers: [DriverAvailabilityController],
-  providers: [DriverAvailabilityService, DriverAvailabilityRepository],
+  providers: [
+    DriverAvailabilityService,
+    DriverAvailabilityRepository,
+    PresenceSweeperJob,
+  ],
   exports: [DriverAvailabilityService, DriverAvailabilityRepository],
 })
 export class DriversAvailabilityModule {}

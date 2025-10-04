@@ -40,85 +40,6 @@ export class DriverBalanceController {
   private readonly logger = new Logger(DriverBalanceController.name);
   constructor(private readonly driverBalanceService: DriverBalanceService) {}
 
-  @Public()
-  @Post()
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({
-    summary: 'Onboarding de wallet del driver',
-    description:
-      'Crea el wallet del driver si no existe, con saldos en cero y estado "active". No genera WalletMovement.',
-  })
-  @ApiBody({
-    type: CreateDriverBalanceDto,
-    required: true,
-  })
-  @ApiCreatedResponse({
-    description: 'Wallet creado correctamente',
-    type: CreateDriverBalanceResponseDto,
-  })
-  @ApiBadRequestResponse({
-    description: 'Petición inválida',
-  })
-  @ApiConflictResponse({
-    description: 'El driver ya posee un wallet',
-  })
-  @ApiInternalServerErrorResponse({
-    description: 'Error interno del servidor',
-  })
-  async createWalletOnboarding(
-    @Body() body: CreateDriverBalanceDto,
-  ): Promise<CreateDriverBalanceResponseDto> {
-    this.logger.log(`Creating driver balance for driver: ${body.driverId}`);
-    const apiResp =
-      await this.driverBalanceService.createDriverWalletOnboarding(body);
-    return apiResp;
-  }
-
-  @Public()
-  @Post(':driverId/commissions/cash')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Aplica comisión de viaje en efectivo',
-    description:
-      'Debita la comisión del viaje (cash) del wallet del driver. Idempotente por (tripId, driverId, platform_commission).',
-  })
-  @ApiParam({
-    name: 'driverId',
-    description: 'UUID del driver',
-    example: '3a0c239d-7a63-43b2-a9b3-25b0f3a7a2cd',
-  })
-  @ApiBody({ type: ApplyCashCommissionDto })
-  @ApiOkResponse({
-    description: 'Comisión aplicada',
-    type: CashCommissionResponseDto,
-  })
-  @ApiBadRequestResponse({ description: 'Petición inválida' })
-  @ApiNotFoundResponse({ description: 'Wallet no encontrado' })
-  @ApiConflictResponse({
-    description: 'Conflicto de idempotencia o constraint',
-  })
-  @ApiInternalServerErrorResponse({ description: 'Error interno del servidor' })
-  async applyCashTripCommission(
-    @Param('driverId', new ParseUUIDPipe({ version: '4' })) driverId: string,
-    @Body() body: ApplyCashCommissionDto,
-  ) {
-    const { wallet, movement, tx } =
-      await this.driverBalanceService.applyCashTripCommission(driverId, body);
-
-    const response: CashCommissionResponseDto = {
-      transactionId: tx.id,
-      walletMovementId: movement.id,
-      driverId,
-      tripId: body.tripId,
-      currency: wallet.currency,
-      commissionAmount: Number(body.commissionAmount).toFixed(2),
-      previousBalance: Number(movement.previousBalance).toFixed(2),
-      newBalance: Number(movement.newBalance).toFixed(2),
-      totalEarnedFromTrips: Number(wallet.totalEarnedFromTrips).toFixed(2),
-    };
-
-    return formatSuccessResponse('Comisión aplicada correctamente.', response);
-  }
   //Crear recarga de wallet en efectivo (CCR pending)
   @Public()
   @Post(':driverId/topups')
@@ -156,7 +77,7 @@ export class DriverBalanceController {
   }
   //Confirmar recraga de wallet en efectivo
   @Public()
-  @Post(':driverId/topups/:ccrId/confirm')
+  @Post('topups/:ccrId/confirm')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary: 'Confirmar depósito en efectivo',
@@ -176,7 +97,6 @@ export class DriverBalanceController {
   })
   @ApiInternalServerErrorResponse({ description: 'Error interno' })
   async confirmCashTopup(
-    @Param('driverId', new ParseUUIDPipe({ version: '4' })) driverId: string,
     @Param('ccrId', new ParseUUIDPipe({ version: '4' })) ccrId: string,
     @Body() body: ConfirmCashTopupDto,
   ) {
@@ -187,7 +107,7 @@ export class DriverBalanceController {
       txId,
       amount,
       currency,
-    } = await this.driverBalanceService.confirmCashTopup(driverId, ccrId, body);
+    } = await this.driverBalanceService.confirmCashTopup(ccrId, body);
 
     const res: CashTopupConfirmedResponseDto = {
       cashCollectionRecordId: id,

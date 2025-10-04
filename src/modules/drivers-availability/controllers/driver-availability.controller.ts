@@ -1,9 +1,19 @@
 // src/modules/drivers/controllers/driver-availability.controller.ts
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   ApiBody,
   ApiCreatedResponse,
   ApiOkResponse,
+  ApiQuery,
   ApiTags,
 } from '@nestjs/swagger';
 import { DriverAvailabilityService } from '../services/driver-availability.service';
@@ -13,6 +23,10 @@ import { DriverAvailabilityQueryDto } from '../dtos/driver-availability-query.dt
 import { DriverAvailabilityResponseDto } from '../dtos/driver-availability-response.dto';
 import { PaginationMetaDto } from 'src/common/dto/pagination-meta.dto';
 import { CreateDriverAvailabilityDto } from '../dtos/create-driver-availability.dto';
+import { UpsertDriverAvailabilityDto } from '../dtos/driver-availability-upsert.dto';
+import { UpdateDriverStatusDto } from '../dtos/update-status.dto';
+import { UpdateDriverLocationDto } from '../dtos/update-location.dto';
+import { UpdateDriverTripDto } from '../dtos/update-trip.dto';
 
 @ApiTags('driver-availability')
 @Controller('driver-availability')
@@ -21,6 +35,7 @@ export class DriverAvailabilityController {
     private readonly driverAvailabilityService: DriverAvailabilityService,
   ) {}
 
+  // GET /driver-availability  -> listado + filtros
   @Public()
   @Get()
   @ApiOkResponse({
@@ -48,5 +63,114 @@ export class DriverAvailabilityController {
   ): Promise<DriverAvailabilityResponseDto> {
     // El ApiResponseInterceptor envolverá automáticamente en { success, message, data }
     return this.driverAvailabilityService.create(dto);
+  }
+
+  // GET /driver-availability/by-driver/:driverId  -> detalle
+  @Public()
+  @Get('by-driver/:driverId')
+  @ApiOkResponse({
+    description: 'Driver availability by driver',
+    type: ApiResponseDto,
+  })
+  async byDriver(
+    @Param('driverId') driverId: string,
+  ): Promise<DriverAvailabilityResponseDto> {
+    return this.driverAvailabilityService.findByDriver(driverId);
+  }
+
+  // GET /driver-availability/nearby?lat&lng&radiusMeters&limit  -> matching simple
+  @Public()
+  @Get('nearby')
+  @ApiOkResponse({
+    description: 'Nearby available drivers',
+    type: ApiResponseDto,
+  })
+  @ApiQuery({ name: 'lat', type: Number, required: true })
+  @ApiQuery({ name: 'lng', type: Number, required: true })
+  @ApiQuery({ name: 'radiusMeters', type: Number, required: false })
+  @ApiQuery({ name: 'limit', type: Number, required: false })
+  async nearby(
+    @Query('lat') lat: string,
+    @Query('lng') lng: string,
+    @Query('radiusMeters') radiusMeters?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const r = await this.driverAvailabilityService.findNearby(
+      Number(lat),
+      Number(lng),
+      radiusMeters ? Number(radiusMeters) : 2000,
+      limit ? Number(limit) : 50,
+      90,
+    );
+    return { success: true, message: 'Nearby drivers', data: r };
+  }
+
+  // POST /driver-availability/upsert  -> crea o actualiza por driverId
+  @Public()
+  @Post('upsert')
+  @ApiBody({ type: UpsertDriverAvailabilityDto })
+  @ApiCreatedResponse({
+    description: 'Upsert driver availability',
+    type: ApiResponseDto,
+  })
+  async upsert(
+    @Body() dto: UpsertDriverAvailabilityDto,
+  ): Promise<DriverAvailabilityResponseDto> {
+    return this.driverAvailabilityService.upsert(dto);
+  }
+
+  // PATCH /driver-availability/:driverId/status  -> online/available/reason
+  @Public()
+  @Patch(':driverId/status')
+  @ApiBody({ type: UpdateDriverStatusDto })
+  @ApiOkResponse({ description: 'Update status', type: ApiResponseDto })
+  async updateStatus(
+    @Param('driverId') driverId: string,
+    @Body() dto: UpdateDriverStatusDto,
+  ): Promise<DriverAvailabilityResponseDto> {
+    return this.driverAvailabilityService.updateStatus(driverId, dto);
+  }
+
+  // POST /driver-availability/:driverId/location  -> ping de ubicación
+  @Public()
+  @Post(':driverId/location')
+  @ApiBody({ type: UpdateDriverLocationDto })
+  @ApiOkResponse({ description: 'Update location', type: ApiResponseDto })
+  async updateLocation(
+    @Param('driverId') driverId: string,
+    @Body() dto: UpdateDriverLocationDto,
+  ): Promise<DriverAvailabilityResponseDto> {
+    return this.driverAvailabilityService.updateLocation(driverId, dto);
+  }
+
+  // PATCH /driver-availability/:driverId/trip  -> set/unset currentTripId
+  @Public()
+  @Patch(':driverId/trip')
+  @ApiBody({ type: UpdateDriverTripDto })
+  @ApiOkResponse({
+    description: 'Set/Clear current trip',
+    type: ApiResponseDto,
+  })
+  async setOrClearTrip(
+    @Param('driverId') driverId: string,
+    @Body() dto: UpdateDriverTripDto,
+  ): Promise<DriverAvailabilityResponseDto> {
+    return this.driverAvailabilityService.setOrClearTrip(driverId, dto);
+  }
+
+  // DELETE /driver-availability/:driverId  -> soft delete
+  @Public()
+  @Delete(':driverId')
+  @ApiOkResponse({
+    description: 'Soft delete driver availability',
+    type: ApiResponseDto,
+  })
+  async softDelete(@Param('driverId') driverId: string) {
+    await this.driverAvailabilityService.softDelete(driverId);
+    return {
+      success: true,
+      message: 'Driver availability deleted',
+      data: null,
+    };
   }
 }

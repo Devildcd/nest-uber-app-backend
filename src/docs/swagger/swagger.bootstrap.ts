@@ -2,7 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import { SwaggerService } from './swagger.service';
 import { AuthModule } from 'src/modules/auth/auth.module';
 import { UserModule } from 'src/modules/user/user.module';
-import { SwaggerOptions } from 'src/core/interfaces/swagger-options.interface';
+import { SwaggerOptions } from 'src/common/interfaces/swagger-options.interface';
 
 const swaggerConfigs: SwaggerOptions[] = [
   {

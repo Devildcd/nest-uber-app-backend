@@ -198,6 +198,7 @@ export class OrdersController {
     return this.ordersService.remove(id);
   }
 
+  @Public()
   @Post(':id/immediate-refund')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -249,6 +250,8 @@ export class OrdersController {
       result,
     );
   }
+
+  @Public()
   @Post(':id/refunds')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
@@ -273,6 +276,7 @@ export class OrdersController {
 
     const result = await this.ordersService.processNormalRefund(orderId, {
       adminId: body.adminId,
+      collectionPointId: body.collectionPointId,
       requestedBy: body.adminId,
       reason: body.reason,
       amount: body.amount,

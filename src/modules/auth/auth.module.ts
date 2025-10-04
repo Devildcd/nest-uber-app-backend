@@ -41,7 +41,6 @@ import { DataSource } from 'typeorm';
     TokenService,
     DeviceService,
     JwtService,
-    SessionRepository,
     JwtStrategy,
     JwtAuthGuard,
     {
@@ -62,6 +61,7 @@ import { DataSource } from 'typeorm';
     AuthCredentialsRepository,
     JwtAuthGuard,
     SessionRepository,
+    TokenService,
   ],
   controllers: [AuthController],
 })

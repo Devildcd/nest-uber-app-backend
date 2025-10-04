@@ -19,7 +19,10 @@ import {
 import { handleRepositoryError } from 'src/common/utils/handle-repository-error';
 import { PaginationDto } from 'src/common/dto/pagination.dto';
 import { DriverAvailabilityQueryDto } from '../dtos/driver-availability-query.dto';
-import { DriverAvailabilityListItemProjection } from '../interfaces/driver-availability.interface';
+import {
+  DriverAvailabilityListItemProjection,
+  FindEligibleDriversParams,
+} from '../interfaces/driver-availability.interface';
 
 export const DRIVER_AVAILABILITY_RELATIONS = [
   'driver',
@@ -100,6 +103,175 @@ export class DriverAvailabilityRepository extends BaseRepository<DriverAvailabil
         this.logger,
         err,
         'findByDriverId',
+        this.entityName,
+      );
+      throw err;
+    }
+  }
+
+  /**
+   * Devuelve candidatos "matcheables" cerca del pickup.
+   * Incluye filtros de compatibilidad y exclusión de intentos previos.
+   * Proyecta lo necesario para el matching: driverId y primaryVehicleId.
+   */
+  async findEligibleDrivers(
+    p: FindEligibleDriversParams,
+  ): Promise<Array<{ driverId: string; primaryVehicleId: string }>> {
+    const {
+      pickup,
+      radiusMeters,
+      limit,
+      vehicleCategoryId,
+      serviceClassId,
+      excludeAlreadyTriedForTripId,
+      requireWalletActive = true,
+      requireVehicleInService = true,
+      ttlSeconds = 90,
+    } = p;
+
+    const qb = this.qb('da')
+      .leftJoin('da.driver', 'driver')
+      .leftJoin('da.currentVehicle', 'v')
+      .select([
+        'da.driver_id AS "driverId"',
+        'da.current_vehicle_id AS "primaryVehicleId"',
+        // Distancia para ordenar (no la devolvemos si no quieres)
+        `ST_Distance(
+        da.last_location,
+        ST_SetSRID(ST_MakePoint(:lon2, :lat2), 4326)::geography
+      ) AS "distanceMeters"`,
+      ])
+      // Estado base "matcheable"
+      .where('da.is_online = true')
+      .andWhere('da.is_available_for_trips = true')
+      .andWhere('da.availability_reason IS NULL')
+      .andWhere('da.current_trip_id IS NULL')
+      .andWhere('da.last_location IS NOT NULL')
+      .andWhere(`driver.status <> 'banned'`);
+
+    // TTL de presencia
+    if (ttlSeconds > 0) {
+      qb.andWhere('da.last_presence_timestamp IS NOT NULL').andWhere(
+        `da.last_presence_timestamp >= NOW() - (:ttl::int * INTERVAL '1 second')`,
+        { ttl: ttlSeconds },
+      );
+    }
+
+    // Requisitos opcionales
+    if (requireWalletActive) {
+      qb.andWhere(
+        `EXISTS (
+        SELECT 1
+        FROM driver_balance db
+        WHERE db.driver_id = da.driver_id
+          AND db.status = 'active'
+      )`,
+      );
+    }
+    if (requireVehicleInService) {
+      qb.andWhere(
+        `EXISTS (
+        SELECT 1
+        FROM vehicles vv
+        WHERE vv.id = da.current_vehicle_id
+          AND vv.status = 'in_service'
+          AND vv.deleted_at IS NULL
+      )`,
+      );
+    }
+
+    // Compatibilidad (ajusta a tu modelo real)
+    if (vehicleCategoryId) {
+      qb.andWhere(
+        `EXISTS (
+        SELECT 1
+        FROM vehicle_categories vc
+        WHERE vc.id = :vcid
+          AND vc.id = v.vehicle_category_id
+      )`,
+        { vcid: vehicleCategoryId },
+      );
+    }
+    if (serviceClassId) {
+      qb.andWhere(
+        `EXISTS (
+        SELECT 1
+        FROM vehicle_service_classes vsc
+        WHERE vsc.id = :scid
+          AND vsc.id = v.service_class_id
+      )`,
+        { scid: serviceClassId },
+      );
+    }
+
+    // Geofiltro + orden por distancia
+    qb.andWhere(
+      `ST_DWithin(
+      da.last_location,
+      ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+      :radius
+    )`,
+      { lon: pickup.lng, lat: pickup.lat, radius: radiusMeters },
+    )
+      .setParameters({ lon2: pickup.lng, lat2: pickup.lat })
+      .orderBy(`"distanceMeters"`, 'ASC')
+      .limit(Math.max(1, limit * 2)); // traemos un poco más por si descartamos por exclusiones
+
+    // Exclusión de candidatos ya intentados/ofertados para este trip
+    if (excludeAlreadyTriedForTripId) {
+      // Excluye drivers con oferta ACTIVA para el mismo trip
+      qb.andWhere(
+        `NOT EXISTS (
+        SELECT 1 FROM trip_assignments ta
+        WHERE ta.trip_id = :tripId
+          AND ta.driver_id = da.driver_id
+          AND ta.status = 'offered'
+          AND ta.responded_at IS NULL
+      )`,
+        { tripId: excludeAlreadyTriedForTripId },
+      );
+
+      // Excluye drivers que ya respondieron o expiraron/cancelaron para este trip (cooldown implícito)
+      qb.andWhere(
+        `NOT EXISTS (
+        SELECT 1 FROM trip_assignments tb
+        WHERE tb.trip_id = :tripId2
+          AND tb.driver_id = da.driver_id
+          AND (
+              tb.responded_at IS NOT NULL
+           OR tb.status IN ('rejected','expired','cancelled','accepted')
+          )
+      )`,
+        { tripId2: excludeAlreadyTriedForTripId },
+      );
+    }
+
+    const rows = await qb.getRawMany<{
+      driverId: string;
+      primaryVehicleId: string;
+    }>();
+    // corta a limit por si vinieron más
+    return rows.slice(0, Math.max(1, limit));
+  }
+
+  async lockDriverForUpdate(
+    driverId: string,
+    manager?: EntityManager,
+  ): Promise<DriverAvailability | null> {
+    try {
+      const qb = (
+        manager ? manager.getRepository(DriverAvailability) : this
+      ).createQueryBuilder('da');
+
+      return await qb
+        .setLock('pessimistic_write')
+        .where('da.driver_id = :driverId', { driverId })
+        .getOne();
+    } catch (err) {
+      handleRepositoryError(
+        this.logger,
+        err,
+        'lockDriverForUpdate',
         this.entityName,
       );
       throw err;
@@ -568,6 +740,35 @@ export class DriverAvailabilityRepository extends BaseRepository<DriverAvailabil
         );
       }
     }
+  }
+
+  // --- NUEVO: upsert por driverId, simple wrapper con ensure+updatePartial ---
+  async upsertByDriverId(
+    driverId: string,
+    patch: Partial<DriverAvailability>,
+    manager?: EntityManager,
+  ): Promise<DriverAvailability> {
+    await this.ensureForDriver(driverId, {}, manager);
+    const row = await this.findByDriverId(driverId, [], manager);
+    if (!row)
+      throw new NotFoundException(
+        `DriverAvailability ${driverId} not found after ensure`,
+      );
+    return this.updatePartial(row.id, patch, manager);
+  }
+
+  // --- NUEVO: soft delete por driverId ---
+  async softDeleteByDriverId(
+    driverId: string,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const repo = this.scoped(manager);
+    const row = await this.findByDriverId(driverId, [], manager);
+    if (!row)
+      throw new NotFoundException(
+        `DriverAvailability for ${driverId} not found`,
+      );
+    await repo.update({ id: row.id }, { deletedAt: () => 'now()' } as any);
   }
 
   private async countWithFilters(
