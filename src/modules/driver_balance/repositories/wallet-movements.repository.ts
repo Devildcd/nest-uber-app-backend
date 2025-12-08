@@ -1,8 +1,24 @@
 // src/modules/wallets/repositories/wallet-movements.repository.ts
-import { BadRequestException, Logger } from '@nestjs/common';
-import { DataSource, DeepPartial, EntityManager, Repository } from 'typeorm';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
+import {
+  DataSource,
+  DeepPartial,
+  EntityManager,
+  Repository,
+  SelectQueryBuilder,
+} from 'typeorm';
 import { WalletMovement } from '../entities/wallet-movement.entity';
 import { handleRepositoryError } from '../../../common/utils/handle-repository-error';
+import { BaseRepository } from 'src/common/repositories/base.repository';
+import { PaginationDto } from 'src/common/dto/pagination.dto';
+import { WalletMovementQueryDto } from '../dto/wallet-movements-query.dto';
+import { formatErrorResponse } from 'src/common/utils/api-response.utils';
+import { DriverBalance } from '../entities/driver_balance.entity';
 
 export type CreateAndSaveMovementOpts = {
   transactionId?: string | null;
@@ -13,12 +29,13 @@ export type CreateAndSaveMovementOpts = {
   // Si autoApplyToWallet = false, puedes pasar previousBalance/newBalance en payload
 };
 
+@Injectable()
 export class WalletMovementsRepository extends Repository<WalletMovement> {
   private readonly logger = new Logger(WalletMovementsRepository.name);
   private readonly entityName = 'WalletMovement';
 
-  constructor(dataSource: DataSource) {
-    super(WalletMovement, dataSource?.createEntityManager());
+  constructor(private dataSource: DataSource) {
+    super(WalletMovement, dataSource.createEntityManager());
   }
   /**
    * Crea y guarda un WalletMovement.
@@ -35,17 +52,6 @@ export class WalletMovementsRepository extends Repository<WalletMovement> {
       note?: string;
     },
   ): Promise<WalletMovement> {
-    if (!manager) {
-      throw new BadRequestException(
-        'EntityManager is required and must be transactional',
-      );
-    }
-    const qr = manager.queryRunner;
-    if (!qr || !qr.isTransactionActive) {
-      throw new BadRequestException(
-        'The provided EntityManager must be used inside an active transaction',
-      );
-    }
     // create movement
     const movementRepo = manager.getRepository(WalletMovement);
     const movement = movementRepo.create({
@@ -92,5 +98,61 @@ export class WalletMovementsRepository extends Repository<WalletMovement> {
       .orderBy('m.createdAt', 'DESC')
       .limit(1)
       .getOne();
+  }
+
+  /** Listado paginado con entidades (siguiendo misma línea que availability) */
+  async findAllPaginated(
+    pagination: PaginationDto,
+    walletId: string,
+    filters?: WalletMovementQueryDto,
+  ): Promise<[WalletMovement[], number]> {
+    try {
+      const { page = 1, limit = 10 } = pagination;
+      const skip = (page - 1) * limit;
+
+      // 2) Armado de QB (alias 'm'), filtra por wallet en el WHERE base
+      const qb: SelectQueryBuilder<WalletMovement> = this.createQueryBuilder(
+        'm',
+      )
+        .leftJoin('m.wallet', 'w')
+        .where('w.id = :walletId', { walletId })
+        .orderBy('m.createdAt', 'DESC') // snake_case para evitar sorpresas con TypeORM
+        .skip(skip)
+        .take(limit);
+
+      if (filters) {
+        this.applyFilters(qb, filters);
+      }
+      console.log(qb.getSql()); // Muestra la consulta SQL con parámetros nombrados
+      console.log(qb.getParameters()); // Muestra los valores de los parámetros
+
+      return qb.getManyAndCount();
+    } catch (err) {
+      handleRepositoryError(
+        this.logger,
+        err,
+        'findAllPaginated',
+        this.entityName,
+      );
+    }
+  }
+
+  // ---------- filtros ----------
+  private applyFilters(
+    qb: SelectQueryBuilder<WalletMovement>,
+    f: WalletMovementQueryDto,
+  ): void {
+    if (f.transactionId) {
+      qb.andWhere('m.transaction_id = :tx', { tx: f.transactionId });
+    }
+    if (f.from) {
+      qb.andWhere('m.createdAt >= :from', { from: f.from });
+    }
+    if (f.to) {
+      qb.andWhere('m.createdAt <= :to', { to: f.to });
+    }
+    if (f.search) {
+      qb.andWhere('m.note ILIKE :s', { s: `%${f.search}%` });
+    }
   }
 }

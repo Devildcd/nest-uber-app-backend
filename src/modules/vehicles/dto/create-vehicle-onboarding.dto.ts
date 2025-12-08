@@ -13,9 +13,6 @@ import { VehicleStatus } from '../entities/vehicle.entity';
 
 export class CreateVehicleOnboardingDto {
   @IsUUID()
-  driverId: string;
-
-  @IsUUID()
   vehicleTypeId: string;
 
   @IsString()

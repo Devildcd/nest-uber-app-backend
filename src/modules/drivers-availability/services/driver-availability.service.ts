@@ -36,6 +36,11 @@ import {
   StatusUpdatedEvent,
   TripUpdatedEvent,
 } from '../../../core/domain/events/driver-availability.events';
+import { DriverAvailabilityPingDto } from '../dtos/driver-availability-ping.dto';
+
+const MIN_DISTANCE_METERS = 50; // 50–100 m recomendado
+const MAX_LOCATION_AGE_SECONDS = 60; // 30–60 s recomendado (aquí 60)
+const MIN_WRITE_INTERVAL_SECONDS = 5; // antirebote de escrituras
 
 @Injectable()
 export class DriverAvailabilityService {
@@ -202,9 +207,14 @@ export class DriverAvailabilityService {
     dto: CreateDriverAvailabilityDto,
     manager: EntityManager,
   ): Promise<DriverAvailabilityResponseDto> {
+    this.logger.debug(`[avail] createWithinTx IN dto=${JSON.stringify(dto)}`);
+
     // 1) Validar usuario
     const user = await this.userRepo.findById(dto.driverId);
     if (!user || user.userType !== UserType.DRIVER) {
+      this.logger.warn(
+        `[avail] user invalid driverId=${dto.driverId} userType=${user?.userType ?? 'n/a'}`,
+      );
       throw new NotFoundException(`Driver ${dto.driverId} no existe`);
     }
 
@@ -221,14 +231,24 @@ export class DriverAvailabilityService {
       [],
       manager,
     );
-    if (!row)
+    if (!row) {
+      this.logger.error(
+        `[avail] ensureForDriver OK pero no aparece fila driverId=${dto.driverId}`,
+      );
       throw new NotFoundException(
         `DriverAvailability for ${dto.driverId} not found after ensure`,
       );
+    }
+    this.logger.debug(
+      `[avail] current row id=${row.id} isOnline=${row.isOnline} isAvailableForTrips=${row.isAvailableForTrips} currentVehicleId=${row.currentVehicleId ?? 'null'}`,
+    );
 
     // 4) Construir patch a partir del DTO
     const wantsOnline = dto.isOnline === true;
     const wantsAvailable = dto.isAvailableForTrips === true;
+    this.logger.debug(
+      `[avail] intents wantsOnline=${wantsOnline} wantsAvailable=${wantsAvailable}`,
+    );
 
     const patch: Partial<DriverAvailability> = {
       isOnline: wantsOnline,
@@ -250,17 +270,29 @@ export class DriverAvailabilityService {
       }),
       ...(wantsOnline && { lastPresenceTimestamp: new Date() }),
     };
+    this.logger.debug(
+      `[avail] patch@initial ${JSON.stringify({
+        isOnline: patch.isOnline,
+        isAvailableForTrips: patch.isAvailableForTrips,
+        currentTripId: patch.currentTripId ?? null,
+        currentVehicleId: patch.currentVehicleId ?? null,
+      })}`,
+    );
 
     // Normalizaciones
     if (patch.isAvailableForTrips && !patch.isOnline) {
+      this.logger.debug(
+        '[avail] normalize: available=false because isOnline=false',
+      );
       patch.isAvailableForTrips = false;
     }
     if (patch.currentTripId) {
+      this.logger.debug('[avail] normalize: ON_TRIP => available=false');
       patch.isAvailableForTrips = false;
       patch.availabilityReason = AvailabilityReason.ON_TRIP;
     }
 
-    // 5) Elegibilidad (wallet + profile + vehicle in_service) si intenta operar y no está en trip
+    // 5) Elegibilidad (wallet + profile + vehicle IN_SERVICE) si intenta operar y no está en trip
     if ((wantsOnline || wantsAvailable) && !patch.currentTripId) {
       const elig = await this.checkOperationalEligibility(
         dto.driverId,
@@ -268,30 +300,62 @@ export class DriverAvailabilityService {
         manager,
       );
 
+      // si tu checkOperationalEligibility devuelve { ok, vehicleId, details }, lo logeamos bonito;
+      // si no, igual queda algo útil en el log
+      const details = (elig as any).details ?? {};
+      this.logger.debug(
+        `[avail] eligibility ok=${elig.ok} vehicleId=${elig.vehicleId ?? 'null'} details=${JSON.stringify(details)}`,
+      );
+
       if (!elig.ok) {
-        patch.isOnline = wantsOnline; // presencia ok
+        // presencia OK si quiere online, pero NO disponible para viajes
+        patch.isOnline = wantsOnline;
         patch.isAvailableForTrips = false;
         patch.availabilityReason = AvailabilityReason.UNAVAILABLE;
+
+        this.logger.warn(
+          `[avail] UNAVAILABLE driver=${dto.driverId} ` +
+            `reason=${details.reason ?? 'eligibility_failed'} :: ` +
+            `userOk=${String(details.userOk)} profileOk=${String(details.profileOk)} ` +
+            `walletActive=${String(details.walletActive)} vehicleOk=${String(details.vehicleOk)}`,
+        );
       } else {
+        // si está online y no se envió currentVehicleId, usa el resuelto
         if (wantsOnline && !patch.currentVehicleId && elig.vehicleId) {
           patch.currentVehicleId = elig.vehicleId;
+          this.logger.debug(
+            `[avail] selected vehicleId=${elig.vehicleId} for driver=${dto.driverId}`,
+          );
         }
-        // REGLA: online + elegible ⇒ available=true, reason=NULL (salvo que el cliente pida NO available)
+        // REGLA: online + elegible ⇒ available=true (a menos que el cliente pida explícitamente false)
         if (wantsOnline) {
           const clientExplicitNoAvailable = dto.isAvailableForTrips === false;
           patch.isAvailableForTrips = clientExplicitNoAvailable ? false : true;
           patch.availabilityReason = patch.isAvailableForTrips
             ? null
             : AvailabilityReason.UNAVAILABLE;
+          this.logger.debug(
+            `[avail] final availability from rule online+eligible => isAvailableForTrips=${patch.isAvailableForTrips}`,
+          );
         }
       }
     }
 
     // 6) OFFLINE explícito si no está online y no hay trip
     if (!patch.isOnline && !patch.currentTripId) {
+      this.logger.debug('[avail] offline path => availabilityReason=OFFLINE');
       patch.isAvailableForTrips = false;
       patch.availabilityReason = AvailabilityReason.OFFLINE;
     }
+
+    this.logger.debug(
+      `[avail] patch@final ${JSON.stringify({
+        isOnline: patch.isOnline,
+        isAvailableForTrips: patch.isAvailableForTrips,
+        availabilityReason: patch.availabilityReason ?? null,
+        currentVehicleId: patch.currentVehicleId ?? null,
+      })}`,
+    );
 
     // 7) Un solo write definitivo
     const saved = await this.driverAvailabilityRepo.updatePartial(
@@ -299,7 +363,156 @@ export class DriverAvailabilityService {
       patch,
       manager,
     );
+
+    this.logger.debug(
+      `[avail] saved id=${saved.id} isOnline=${saved.isOnline} ` +
+        `isAvailableForTrips=${saved.isAvailableForTrips} ` +
+        `reason=${saved.availabilityReason ?? 'null'} vehicleId=${saved.currentVehicleId ?? 'null'}`,
+    );
+
     return toDriverAvailabilityResponseDto(saved);
+  }
+
+  /**
+   * Ingresa un ping: con o sin ubicación.
+   * Regla: solo guarda lastLocation si ONLINE + disponible (reason NULL)
+   * y si movió >= umbral o la última muestra es vieja.
+   * Siempre refresca lastPresenceTimestamp.
+   */
+  async ingestLocationPing(driverId: string, dto: DriverAvailabilityPingDto) {
+    this.logger.debug(`[PING] IN d=${driverId} body=${JSON.stringify(dto)}`);
+
+    // 1) asegurar fila
+    await this.driverAvailabilityRepo.ensureForDriver(driverId, {});
+    const av = await this.driverAvailabilityRepo.findByDriverId(driverId);
+    if (!av)
+      throw new NotFoundException(
+        `DriverAvailability for ${driverId} not found`,
+      );
+
+    const now = new Date();
+    const reportedAt = dto.reportedAt ? new Date(dto.reportedAt) : now;
+
+    const hasLocation =
+      typeof dto.lat === 'number' &&
+      !Number.isNaN(dto.lat) &&
+      typeof dto.lng === 'number' &&
+      !Number.isNaN(dto.lng);
+
+    const isMatchable =
+      av.isOnline === true &&
+      av.isAvailableForTrips === true &&
+      (av.availabilityReason ?? null) === null &&
+      !av.currentTripId;
+
+    // ⬅️ primero, log del snapshot antes de decidir
+    this.logger.debug(
+      `[PING] SNAP d=${driverId} hasLoc=${hasLocation} matchable=${isMatchable} ` +
+        `online=${av.isOnline} avail=${av.isAvailableForTrips} reason=${av.availabilityReason ?? 'NULL'} ` +
+        `trip=${av.currentTripId ?? 'NULL'} vehicle=${av.currentVehicleId ?? 'NULL'} ` +
+        `last_loc=${av.lastLocation ? 'SET' : 'NULL'} last_loc_ts=${av.lastLocationTimestamp ?? 'NULL'} ` +
+        `presence=${av.lastPresenceTimestamp ?? 'NULL'}`,
+    );
+
+    let shouldSaveLocation = false;
+
+    // ⚠️ PRIMER-FIX: si NO hay last_location en DB y viene (lat,lng) ⇒ guardar SIEMPRE
+    const isFirstSeed = hasLocation && !av.lastLocation;
+    if (isFirstSeed) {
+      shouldSaveLocation = true;
+      this.logger.warn(
+        `[PING] first-seed: last_location was NULL, will save without matchable check`,
+      );
+    }
+
+    // lógica original, sólo si no es "first seed"
+    if (!shouldSaveLocation && hasLocation && isMatchable) {
+      const lastLocTs = av.lastLocationTimestamp
+        ? new Date(av.lastLocationTimestamp).getTime()
+        : 0;
+      const lastUpdated = av.updatedAt ? new Date(av.updatedAt).getTime() : 0;
+      const lastWriteTs = Math.max(lastLocTs, lastUpdated);
+      const secondsSinceLastWrite = (now.getTime() - lastWriteTs) / 1000;
+
+      const MIN_WRITE_INTERVAL_SECONDS = 3; // ajusta a tu valor real
+      const MAX_LOCATION_AGE_SECONDS = 45; // idem
+      const MIN_DISTANCE_METERS = 8; // idem
+
+      this.logger.debug(
+        `[PING] decide d=${driverId} force=${!!dto.forceSave} ` +
+          `lastWriteAgo=${secondsSinceLastWrite.toFixed(1)}s`,
+      );
+
+      if (dto.forceSave) {
+        shouldSaveLocation = true;
+      } else if (secondsSinceLastWrite >= MAX_LOCATION_AGE_SECONDS) {
+        shouldSaveLocation = true;
+        this.logger.debug(`[PING] reason=stale`);
+      } else if (secondsSinceLastWrite >= MIN_WRITE_INTERVAL_SECONDS) {
+        // medir distancia contra last_location actual (si existe)
+        const dist =
+          await this.driverAvailabilityRepo.distanceToCurrentLastLocation(
+            driverId,
+            dto.lng!,
+            dto.lat!,
+          );
+        this.logger.debug(
+          `[PING] distance=${dist ?? 'NULL'}m thr=${MIN_DISTANCE_METERS}m`,
+        );
+        if (dist === null || dist >= MIN_DISTANCE_METERS) {
+          shouldSaveLocation = true;
+          this.logger.debug(`[PING] reason=delta_ok`);
+        }
+      }
+    }
+
+    //  write-path seleccionado
+    if (hasLocation && shouldSaveLocation) {
+      const patch = {
+        lastLocation: toGeoPoint(dto.lat!, dto.lng!),
+        lastLocationTimestamp: reportedAt,
+        lastPresenceTimestamp: now,
+      };
+      this.logger.debug(
+        `[PING] SAVE d=${driverId} patch=${JSON.stringify({
+          lastLocation: 'POINT(...)', // no loguees coords crudas si no quieres
+          lastLocationTimestamp: patch.lastLocationTimestamp,
+          lastPresenceTimestamp: patch.lastPresenceTimestamp,
+        })}`,
+      );
+
+      const saved = await this.driverAvailabilityRepo.updateLocationByDriverId(
+        driverId,
+        patch,
+      );
+      this.logger.debug(
+        `[PING] OUT saved last_loc=SET ts=${saved.lastLocationTimestamp?.toISOString()}`,
+      );
+
+      this.eventEmitter.emit(DriverAvailabilityEvents.LocationUpdated, {
+        at: now.toISOString(),
+        snapshot: toDriverAvailabilityResponseDto(saved),
+      });
+      return toDriverAvailabilityResponseDto(saved);
+    } else {
+      const saved = await this.driverAvailabilityRepo.updateLocationByDriverId(
+        driverId,
+        {
+          lastLocation: undefined,
+          lastLocationTimestamp: undefined,
+          lastPresenceTimestamp: now,
+        },
+      );
+      this.logger.debug(
+        `[PING] HEARTBEAT d=${driverId} presence=${saved.lastPresenceTimestamp?.toISOString()}`,
+      );
+
+      this.eventEmitter.emit(DriverAvailabilityEvents.StatusUpdated, {
+        at: now.toISOString(),
+        snapshot: toDriverAvailabilityResponseDto(saved),
+      });
+      return toDriverAvailabilityResponseDto(saved);
+    }
   }
 
   /**
@@ -369,58 +582,102 @@ export class DriverAvailabilityService {
     driverId: string,
     currentVehicleId: string | null,
     manager?: EntityManager,
-  ): Promise<{ ok: boolean; vehicleId: string | null }> {
-    // 1) User: driver y no banned
+  ): Promise<{
+    ok: boolean;
+    vehicleId: string | null;
+    details: {
+      userOk: boolean;
+      profileOk: boolean;
+      walletActive: boolean;
+      vehicleOk: boolean;
+      reason?: string;
+    };
+  }> {
+    // 1) User
     const user = await this.userRepo.findById(driverId);
     const userOk =
       !!user &&
       user.userType === UserType.DRIVER &&
       user.status !== UserStatus.BANNED;
 
-    // 2) Perfil + Wallet (usando SOLO repos)
+    // 2) Perfil + Wallet
     const [profile, walletActive] = await Promise.all([
-      this.driverProfilesRepo.findByUserIdForEligibility(driverId, manager), // { id, isApproved, driverStatus }
-      this.driverBalanceRepo.isActiveByDriverId(driverId, manager), // boolean
+      this.driverProfilesRepo.findByUserIdForEligibility(driverId, manager),
+      this.driverBalanceRepo.isActiveByDriverId(driverId, manager),
     ]);
-
     const profileOk =
       !!profile &&
       profile.isApproved === true &&
       profile.driverStatus === DriverStatus.ACTIVE;
 
-    // 3) Vehículo: debe existir, estar IN_SERVICE y pertenecer al driver
+    // 3) Resolver vehículo (si no te pasan uno)
+    let vehicleIdToCheck: string | null = currentVehicleId;
+
+    if (!vehicleIdToCheck) {
+      const candidate = await this.vehiclesRepo.findPrimaryInServiceByDriver(
+        driverId,
+        manager,
+      );
+      vehicleIdToCheck = candidate?.id ?? null;
+    }
+
     let vehicleOk = false;
     let vehicleId: string | null = null;
+    let reason: string | undefined;
 
-    if (currentVehicleId) {
-      const vehicle = await this.vehiclesRepo.findById(currentVehicleId); // relations: ['driver','driverProfile','vehicleType']
+    if (vehicleIdToCheck) {
+      // findById acepta SOLO 1 arg
+      const vehicle = await this.vehiclesRepo.findById(vehicleIdToCheck);
 
-      const isInService: boolean = vehicle?.status === VehicleStatus.IN_SERVICE;
+      if (vehicle) {
+        const isInService = vehicle.status === VehicleStatus.IN_SERVICE;
 
-      // Pertenencia por user
-      const belongsByUser: boolean =
-        !!vehicle?.driver && vehicle.driver.id === driverId;
+        const belongsByUser =
+          !!vehicle.driver && vehicle.driver.id === driverId;
 
-      // Pertenencia por driverProfile (convertir a boolean SIN arrastrar string/undefined)
-      const profileId: string | null = profile?.id ?? null;
-      const belongsByProfile: boolean =
-        (profileId !== null &&
-          !!vehicle?.driverProfile &&
-          vehicle.driverProfile.id === profileId) ||
-        (profileId !== null &&
-          !!(vehicle as any)?.driverProfileId &&
-          (vehicle as any).driverProfileId === profileId);
+        const profileId: string | null = profile?.id ?? null;
+        const belongsByProfile =
+          (profileId !== null &&
+            !!vehicle.driverProfile &&
+            vehicle.driverProfile.id === profileId) ||
+          (profileId !== null &&
+            !!(vehicle as any).driverProfileId &&
+            (vehicle as any).driverProfileId === profileId);
 
-      vehicleOk =
-        !!vehicle && isInService && (belongsByUser || belongsByProfile);
-      vehicleId = vehicleOk ? vehicle!.id : null;
+        vehicleOk = isInService && (belongsByUser || belongsByProfile);
+        vehicleId = vehicleOk ? vehicle.id : null;
+
+        if (!vehicleOk) {
+          reason = !isInService
+            ? 'vehicle_not_in_service'
+            : 'vehicle_not_belongs_to_driver';
+        }
+      } else {
+        reason = 'vehicle_not_found';
+      }
     } else {
-      vehicleOk = false;
-      vehicleId = null;
+      reason = 'no_vehicle_found_for_driver';
     }
 
     const ok = userOk && profileOk && walletActive && vehicleOk;
-    return { ok, vehicleId };
+
+    if (!ok) {
+      this.logger?.warn?.(
+        `[elig] user=${driverId} ok=${ok} ` +
+          `userOk=${userOk} profileOk=${profileOk} walletActive=${walletActive} ` +
+          `vehicleOk=${vehicleOk} vehicleId=${vehicleId ?? 'null'} reason=${reason ?? 'n/a'}`,
+      );
+    } else {
+      this.logger?.debug?.(
+        `[elig] user=${driverId} OK vehicleId=${vehicleId} (profile+wallet+vehicle in order)`,
+      );
+    }
+
+    return {
+      ok,
+      vehicleId,
+      details: { userOk, profileOk, walletActive, vehicleOk, reason },
+    };
   }
 
   // DETAIL by driverId

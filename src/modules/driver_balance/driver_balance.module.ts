@@ -22,7 +22,6 @@ import { CashColletionsPointsModule } from '../cash_colletions_points/cash_colle
     TypeOrmModule.forFeature([DriverBalance, WalletMovement, User]),
     TransactionsModule,
     CashColletionsPointsModule,
-    CashColletionsPointsModule,
   ],
   controllers: [DriverBalanceController, WalletsStatusController],
   providers: [

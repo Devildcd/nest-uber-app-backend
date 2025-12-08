@@ -1,16 +1,20 @@
 export enum TripWsEvents {
-  // Pasajero (room: passenger:{userId})
+  // ==== Pasajero (room: passenger:{userId}) ====
   Passenger_TripRequested = 'trip:requested',
-  Passenger_Assigning = 'trip:assigning',
+  Passenger_Assigning = 'trip:assigning', // (mantengo tu nombre)
   Passenger_Assigned = 'trip:assigned',
   Passenger_NoDriversFound = 'trip:no_drivers_found',
 
-  // Conductor (room: driver:{userId})
-  Driver_Offer = 'trip:offer',
-  Driver_OfferCancelled = 'trip:offer:cancelled', // opcional
-  Driver_OfferExpired = 'trip:offer:expired', // opcional
+  // ==== Conductor (room: driver:{userId}) ====
+  Driver_Offer = 'trip:offer', // oferta creada
+  Driver_OfferCancelled = 'trip:offer:cancelled',
+  Driver_OfferExpired = 'trip:offer:expired',
 
-  // Admin (/admin broadcast o room trip:{tripId})
+  // Driver → Server (inbound desde app del conductor)
+  Driver_AcceptOffer = 'driver:offer:accept', // inbound
+  Driver_RejectOffer = 'driver:offer:reject', // inbound
+
+  // ==== Admin (/admin broadcast o room trip:{tripId}) ====
   Admin_AssignmentOffered = 'assignment:offered',
   Admin_TripAssigned = 'trip:assigned',
   Admin_NoDriversFound = 'trip:no_drivers_found',

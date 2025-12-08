@@ -8,40 +8,52 @@ import {
   ValidateIf,
 } from 'class-validator';
 import { SessionType } from '../entities/session.entity';
+import { UserType } from 'src/modules/user/entities/user.entity';
 
 // DTO para login: puede usar email o phoneNumber (al menos uno)
+export enum AppAudience {
+  DRIVER_APP = 'driver_app',
+  PASSENGER_APP = 'passenger_app',
+  ADMIN_PANEL = 'admin_panel',
+  API_CLIENT = 'api_client',
+}
+
 export class LoginDto {
-  @ApiProperty({ description: 'Email del usuario', required: false })
+  @ApiProperty({ required: false })
   @ValidateIf((o: LoginDto) => !o.phoneNumber)
-  @IsEmail({}, { message: 'El email debe ser válido' })
+  @IsEmail()
   @IsOptional()
   email?: string;
 
-  @ApiProperty({
-    description: 'Número de teléfono del usuario',
-    required: false,
-  })
+  @ApiProperty({ required: false })
   @ValidateIf((o: LoginDto) => !o.email)
-  @IsString({ message: 'El número de teléfono debe ser una cadena' })
-  @Length(7, 20, { message: 'El teléfono debe tener entre 7 y 20 caracteres' })
+  @IsString()
+  @Length(7, 20)
   @IsOptional()
   phoneNumber?: string;
 
-  @ApiProperty({ description: 'Contraseña del usuario' })
-  @IsString({ message: 'La contraseña debe ser una cadena' })
-  @Length(8, 100, { message: 'La contraseña debe tener al menos 8 caracteres' })
+  @ApiProperty()
+  @IsString()
+  @Length(8, 100)
   password: string;
 
-  @ApiProperty({
-    description: 'Tipo de sesión (web, mobile_app, admin_panel, api_client)',
-    enum: SessionType,
-    required: false,
-  })
-  @IsEnum(SessionType, { message: 'Tipo de sesión inválido' })
+  @ApiProperty({ required: false, enum: SessionType })
+  @IsEnum(SessionType)
   @IsOptional()
   sessionType?: SessionType;
 
-  @ApiProperty({ description: 'Información del dispositivo', required: false })
+  // 👇 Quién me está llamando (para mapear a rol esperado)
+  @ApiProperty({ enum: AppAudience })
+  @IsEnum(AppAudience)
+  appAudience: AppAudience;
+
+  // (Opcional) si quieres que el cliente lo declare explícitamente y validarlo
+  @ApiProperty({ required: false, enum: UserType })
+  @IsEnum(UserType)
+  @IsOptional()
+  expectedUserType?: UserType;
+
+  @ApiProperty({ required: false })
   @IsOptional()
   deviceInfo?: {
     os?: string;
@@ -50,17 +62,17 @@ export class LoginDto {
     appVersion?: string;
   };
 
-  @ApiProperty({ description: 'Dirección IP del cliente', required: false })
+  @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
   ipAddress?: string;
 
-  @ApiProperty({ description: 'User-Agent del cliente', required: false })
+  @ApiProperty({ required: false })
   @IsOptional()
   @IsString()
   userAgent?: string;
 
-  @ApiProperty({ description: 'Ubicación geográfica', required: false })
+  @ApiProperty({ required: false })
   @IsOptional()
   location?: {
     latitude: number;

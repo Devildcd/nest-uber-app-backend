@@ -145,14 +145,14 @@ export class TripAssignmentRepository extends BaseRepository<TripAssignment> {
   ): Promise<{ tripId: string; driverId: string; vehicleId: string }> {
     const repo = this.scoped(manager);
 
-    // Lock + cargar relaciones para recuperar IDs
+    // Bloquear la fila base + relaciones obligatorias
     const a = await repo
       .createQueryBuilder('a')
-      .leftJoinAndSelect('a.trip', 't')
-      .leftJoinAndSelect('a.driver', 'd')
-      .leftJoinAndSelect('a.vehicle', 'v')
-      .setLock('pessimistic_write')
+      .innerJoinAndSelect('a.trip', 't')
+      .innerJoinAndSelect('a.driver', 'd')
+      .innerJoinAndSelect('a.vehicle', 'v')
       .where('a.id = :id', { id: assignmentId })
+      .setLock('pessimistic_write') // SELECT ... FOR UPDATE
       .getOne();
 
     if (!a) throw new Error('ASSIGNMENT_NOT_FOUND');
@@ -162,7 +162,8 @@ export class TripAssignmentRepository extends BaseRepository<TripAssignment> {
     if (a.ttlExpiresAt && a.ttlExpiresAt.getTime() <= now.getTime())
       throw new Error('ASSIGNMENT_EXPIRED');
 
-    await repo
+    // Intento de transición atómica (solo si sigue offered y sin respuesta)
+    const res = await repo
       .createQueryBuilder()
       .update()
       .set({ status: AssignmentStatus.ACCEPTED, respondedAt: now })
@@ -171,10 +172,64 @@ export class TripAssignmentRepository extends BaseRepository<TripAssignment> {
       .andWhere('responded_at IS NULL')
       .execute();
 
+    if ((res.affected ?? 0) === 0) {
+      throw new Error('ASSIGNMENT_CONCURRENTLY_CHANGED');
+    }
+
     return {
       tripId: (a.trip as any).id,
       driverId: (a.driver as any).id,
       vehicleId: (a.vehicle as any).id,
+    };
+  }
+
+  async acceptOfferWithLocksForDriver(
+    assignmentId: string,
+    driverId: string,
+    now: Date,
+    manager: EntityManager,
+  ): Promise<{ tripId: string; driverId: string; vehicleId: string } | null> {
+    const repo = this.scoped(manager);
+
+    // 1) Lock SOLO la fila de assignments (sin left joins con lock)
+    const a = await repo
+      .createQueryBuilder('a')
+      .setLock('pessimistic_write')
+      .where('a.id = :id', { id: assignmentId })
+      .andWhere('a.driver_id = :driverId', { driverId })
+      .getOne();
+
+    if (!a) throw new Error('ASSIGNMENT_NOT_FOUND');
+    if (a.status !== AssignmentStatus.OFFERED)
+      throw new Error('ASSIGNMENT_NOT_OFFERED');
+    if (a.respondedAt) throw new Error('ASSIGNMENT_ALREADY_RESPONDED');
+    if (a.ttlExpiresAt && a.ttlExpiresAt.getTime() <= now.getTime())
+      throw new Error('ASSIGNMENT_EXPIRED');
+
+    // 2) Actualizar en estado ofrecido (idempotencia bajo lock)
+    const res = await repo
+      .createQueryBuilder()
+      .update()
+      .set({ status: AssignmentStatus.ACCEPTED, respondedAt: now })
+      .where('id = :id', { id: assignmentId })
+      .andWhere('driver_id = :driverId', { driverId })
+      .andWhere('status = :st', { st: AssignmentStatus.OFFERED })
+      .andWhere('responded_at IS NULL')
+      .execute();
+
+    if (res.affected !== 1) throw new Error('ASSIGNMENT_STATE_CHANGED');
+
+    // 3) Leer IDs (sin lock; ya aceptado)
+    const after = await repo.findOne({
+      where: { id: assignmentId } as any,
+      relations: { trip: true, driver: true, vehicle: true },
+    });
+    if (!after) throw new Error('ASSIGNMENT_NOT_FOUND_AFTER_UPDATE');
+
+    return {
+      tripId: (after.trip as any).id,
+      driverId: (after.driver as any).id,
+      vehicleId: (after.vehicle as any).id,
     };
   }
 

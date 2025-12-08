@@ -71,6 +71,21 @@ export class DriverBalanceRepository extends Repository<DriverBalance> {
     }
   }
 
+  /** Lanza 404 si no existe */
+  async getByDriverIdOrThrow(driverId: string, manager?: EntityManager) {
+    const entity = await this.findByDriverId(driverId, manager);
+    if (!entity) {
+      throw new NotFoundException(
+        formatErrorResponse(
+          'WALLET_NOT_FOUND',
+          'No existe wallet para el driver.',
+          { driverId },
+        ),
+      );
+    }
+    return entity;
+  }
+
   /**
    * Crea el wallet del driver con saldos en cero. No crea WalletMovement.
    * Lanza 409 si ya existe (unique_violation 23505).

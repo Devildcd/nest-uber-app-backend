@@ -1,5 +1,12 @@
 import { Type } from 'class-transformer';
-import { IsNumber, IsOptional, IsUUID, Min } from 'class-validator';
+import {
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class CompleteTripDto {
   @IsUUID()
@@ -22,4 +29,17 @@ export class CompleteTripDto {
   @IsNumber()
   @Min(0)
   extraFees?: number | null;
+
+  // ⬇️ NUEVO: minutos de espera totales
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  waitingTimeMinutes?: number | null;
+
+  // ⬇️ NUEVO: motivo / texto de la penalización
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  waitingReason?: string | null;
 }

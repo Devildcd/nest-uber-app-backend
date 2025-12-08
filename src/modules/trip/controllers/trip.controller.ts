@@ -9,10 +9,14 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   Headers as ReqHeaders,
+  UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBearerAuth,
   ApiBody,
   ApiConflictResponse,
   ApiCreatedResponse,
@@ -35,6 +39,10 @@ import { RejectAssignmentDto } from '../dtos/trip-assignment/reject-assignment.d
 import { StartArrivingDto } from '../dtos/trip/start-arriving.dto';
 import { DriverActionDto } from '../dtos/trip/driver-action.dto';
 import { CompleteTripDto } from '../dtos/trip/complete-trip.dto';
+import { JwtAuthGuard } from 'src/modules/auth/guards/jwt-auth.guard';
+import { GetUserId } from 'src/modules/auth/decorators/get-user-id.decorator';
+import { EstimateTripDto } from '../dtos/trip/estimate-trip.dto';
+import { TripQuoteDto } from '../dtos/trip/trip-quote.dto';
 
 @ApiTags('trips')
 @Controller('trips')
@@ -118,6 +126,15 @@ export class TripController {
     return this.tripService.requestTrip(dto, idemKey);
   }
 
+  @Public()
+  @Post('estimate')
+  async estimateTrip(
+    @Body() dto: EstimateTripDto,
+  ): Promise<ApiResponseDto<TripQuoteDto>> {
+    const data = await this.tripService.estimateTrip(dto);
+    return { success: true, message: 'Estimate computed', data };
+  }
+
   @Post(':id/assign/start')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Start assigning phase for a trip' })
@@ -141,10 +158,16 @@ export class TripController {
     return this.tripService.startAssigning(id, dto);
   }
 
-  @Patch('/assignments/accept')
-  @ApiOperation({ summary: 'Aceptar una oferta y fijar driver/vehículo' })
-  async accept(@Body() dto: AcceptAssignmentDto) {
-    return this.tripService.acceptAssignment(dto.assignmentId);
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Patch('/assignments/:id/accept')
+  @ApiOperation({ summary: 'Driver acepta la oferta y queda asignado al trip' })
+  @ApiParam({ name: 'id', description: 'Assignment ID', format: 'uuid' })
+  async acceptAssignment(
+    @Param('id', new ParseUUIDPipe()) assignmentId: string,
+    @GetUserId() driverId: string,
+  ) {
+    return this.tripService.acceptAssignment(assignmentId, driverId);
   }
 
   @Post(':id/reject')
@@ -217,6 +240,7 @@ export class TripController {
     return this.tripService.startTripInProgress(id, dto.driverId);
   }
 
+  @Public()
   @Post(':id/complete')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Completar un viaje (in_progress → completed)' })

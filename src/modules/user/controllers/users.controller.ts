@@ -47,6 +47,9 @@ import { JwtAuthGuard } from 'src/modules/auth/guards/jwt-auth.guard';
 import { GetUserId } from 'src/modules/auth/decorators/get-user-id.decorator';
 import { UserProfileDto } from '../dto/user-profile.dto';
 import { Public } from 'src/modules/auth/decorators/public.decorator';
+import { PassengerLocationService } from '../services/passenger-location.service';
+import { Throttle } from '@nestjs/throttler';
+import { PassengerLocationPingDto } from '../dto/passenger-location-ping.dto';
 
 @ApiTags('users')
 @Controller('users')
@@ -58,6 +61,7 @@ export class UserController {
 
   constructor(
     private readonly userService: UserService,
+    private readonly svc: PassengerLocationService,
     // private readonly authCredService: AuthService,
   ) {}
 
@@ -186,6 +190,22 @@ export class UserController {
     });
   }
 
+  /**
+   * Ping de ubicación del PASAJERO
+   * - Con lat/lng => intenta guardar si cumple umbrales
+   * - Sin lat/lng => heartbeat (opcional)
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post('ping-location')
+  @Throttle({ default: { ttl: 10_000, limit: 8 } }) // 8 pings / 10s (anti-flood)
+  async ping(
+    @GetUserId() userId: string,
+    @Body() dto: PassengerLocationPingDto,
+  ) {
+    return this.svc.ingestPassengerPing(userId, dto);
+  }
+
+  @Public()
   @Patch(':id')
   @HttpCode(HttpStatus.OK)
   @UsePipes(new ValidationPipe({ transform: true, whitelist: true }))

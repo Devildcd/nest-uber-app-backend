@@ -773,4 +773,26 @@ export class TransactionRepository extends Repository<Transaction> {
     const raw = await qb.getRawOne();
     return Number(raw?.total ?? 0);
   }
+
+  /** Idempotencia: busca tx de type=PLAN_PURCHASE con metadata.idempotencyKey */
+  async findPlanPurchaseByIdemKey(
+    idemKey: string,
+    manager?: EntityManager,
+  ): Promise<Transaction | null> {
+    const repo = manager ? manager.getRepository(Transaction) : this;
+    try {
+      return await repo
+        .createQueryBuilder('t')
+        .where('t.type = :tp', { tp: TransactionType.PLAN_PURCHASE })
+        .andWhere(`(t.metadata->>'idempotencyKey') = :ik`, { ik: idemKey })
+        .getOne();
+    } catch (err) {
+      handleRepositoryError(
+        this.logger,
+        err,
+        'findPlanPurchaseByIdemKey',
+        this.entityName,
+      );
+    }
+  }
 }

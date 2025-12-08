@@ -1,15 +1,30 @@
 import { PaymentMode, TripStatus } from '../../entities/trip.entity';
 import { FareBreakdown } from '../../interfaces/trip.interfaces';
 
+export class TripStopDto {
+  seq!: number;
+  point!: { lat: number; lng: number };
+  address?: string | null;
+  placeId?: string | null;
+  notes?: string | null;
+  plannedArrivalAt?: string | null;
+  arrivedAt?: string | null;
+  completedAt?: string | null;
+}
+
 export class TripResponseDto {
   id!: string;
 
   passengerId!: string;
+  passengerName?: string | null;
+  passengerPhone?: string | null;
   driverId?: string | null;
   vehicleId?: string | null;
   orderId?: string | null;
   requestedVehicleCategoryId!: string;
   requestedVehicleCategoryName?: string | null;
+
+  stops?: TripStopDto[];
 
   requestedServiceClassId!: string;
   requestedServiceClassName?: string | null;

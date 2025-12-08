@@ -20,6 +20,7 @@ import { DriversAvailabilityModule } from '../drivers-availability/drivers-avail
 import { TripSnapshot } from './entities/trip-snapshot.entity';
 import { TripSnapshotRepository } from './repositories/trip-snapshot.repository';
 import { OrdersModule } from '../orders/orders.module';
+import { AssignmentExpiryScheduler } from './services/assignment-expiry.scheduler';
 
 @Module({
   imports: [
@@ -47,7 +48,8 @@ import { OrdersModule } from '../orders/orders.module';
     TripHelpersService,
     MatchingDomainGuards,
     TripSnapshotRepository,
+    AssignmentExpiryScheduler,
   ],
-  exports: [TripRepository, TripService],
+  exports: [TripRepository, TripService, AssignmentExpiryScheduler],
 })
 export class TripModule {}

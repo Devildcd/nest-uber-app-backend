@@ -1,7 +1,4 @@
-import { Logger } from '@nestjs/common';
-import { PassengerGateway } from '../gateways/passenger.gateway';
-import { AdminGateway } from '../gateways/admin.gateway';
-import { DriverAvailabilityGateway as DriverGateway } from '../gateways/driver-availability.gateway';
+import { Injectable, Logger } from '@nestjs/common';
 import {
   ArrivingStartedEvent,
   AssigningStartedEvent,
@@ -17,62 +14,110 @@ import {
   TripRequestedEvent,
   TripStartedEvent,
 } from 'src/core/domain/events/trip-domain.events';
-import type { Server } from 'socket.io';
+import { Rooms } from '../rooms/ws-topics';
+import { WsServersRegistry } from '../ws-servers.registry';
+import { DriverAvailabilityGateway } from '../gateways/driver-availability.gateway';
+import { DriverAcceptedForPassengerPayload } from '../interfaces/trip-ws.payloads';
+import { PassengerSlimForDriverDto } from 'src/modules/trip/dtos/trip/driver-passenger.dto';
 
+type Ns = '/passengers' | '/drivers' | '/admin';
+type DriverEnRouteRealtimePayload = DriverEnRouteEvent & {
+  passengerId?: string;
+};
+
+@Injectable()
 export class TripRealtimePublisher {
   private readonly logger = new Logger(TripRealtimePublisher.name);
 
   constructor(
-    private readonly passengerGateway: PassengerGateway,
-    private readonly driverGateway?: DriverGateway, // opcional si quieres emitir a /drivers
-    private readonly adminGateway?: AdminGateway, // opcional si quieres espejo en /admin
+    private readonly wsRegistry: WsServersRegistry,
+    private readonly driversGw: DriverAvailabilityGateway,
   ) {}
 
   // ---------- helpers ----------
-  private emitTo(
-    server: Server | undefined,
-    room: string,
-    event: string,
-    payload: any,
-  ) {
+  private emitTo(ns: Ns, room: string, event: string, payload: any) {
+    const server = this.wsRegistry.get(ns);
+    if (!server) {
+      this.logger.warn(
+        `WS emit skipped (server undefined) ns=${ns} room=${room} evt=${event}`,
+      );
+      return;
+    }
+
     try {
-      server?.to(room).emit(event, payload);
+      // 🔎 Identidad del server (para detectar instancias distintas)
+      const serverId = String(server as any);
+
+      // 🔢 Tamaño del room (rápido, sin promesas)
+      const sizeQuick =
+        (server.sockets as any)?.adapter?.rooms?.get(room)?.size ?? 0;
+
+      this.logger.debug(
+        `[WS] emitTo[quick] ns=${ns} room=${room} size=${sizeQuick} evt=${event} server=${serverId}`,
+      );
+
+      // 🔍 Confirmación con fetchSockets (más precisa, async)
+      server
+        .in(room)
+        .fetchSockets()
+        .then((sockets) => {
+          this.logger.debug(
+            `[WS] emitTo[fetch] ns=${ns} room=${room} clients=${sockets.length} evt=${event} server=${serverId}`,
+          );
+        })
+        .catch(() => {
+          /* noop */
+        });
+
+      // 🛰️ (Opcional) broadcast de debug al namespace para verlo en el frontend
+      // (tu DriverWsService ya hace: socket.on('debug:offered:broadcast', ...)
+      server.emit('debug:offered:broadcast', {
+        ns,
+        room,
+        event,
+        serverId,
+        payload,
+      });
+
+      // 📤 Emit real al room
+      server.to(room).emit(event, payload);
+
+      this.logger.debug(
+        `[WS] emit ok ns=${ns} room=${room} evt=${event} server=${serverId}`,
+      );
     } catch (e) {
       this.logger.warn(
-        `WS emit failed room=${room} evt=${event}: ${(e as Error).message}`,
+        `WS emit failed ns=${ns} room=${room} evt=${event}: ${(e as Error).message}`,
       );
     }
   }
 
-  // ===== FASE 1 =====
+  // ========== FASE 1 ==========
   tripRequested(ev: TripRequestedEvent) {
     const s = ev.snapshot;
-    const requestedAt = s.requestedAt ?? ev.at;
-
     const payload = {
       tripId: s.tripId,
       passengerId: s.passengerId,
-      requestedAt,
+      requestedAt: s.requestedAt ?? ev.at,
+      pickup: s.pickup ?? null,
       fareEstimatedTotal: s.fareEstimatedTotal ?? null,
       fareFinalCurrency: s.fareFinalCurrency ?? null,
-      pickup: s.pickup ?? null,
+      status: 'pending',
     };
 
+    this.logger.log(
+      `[PUB] trip:requested -> ${Rooms.passenger(s.passengerId)} trip=${s.tripId}`,
+    );
+
     this.emitTo(
-      this.passengerGateway.server,
-      `passenger:${s.passengerId}`,
+      '/passengers',
+      Rooms.passenger(s.passengerId),
       'trip:requested',
       payload,
     );
-    this.emitTo(
-      this.adminGateway?.server,
-      `trip:${s.tripId}`,
-      'trip:requested',
-      payload,
-    );
+    this.emitTo('/admin', Rooms.trip(s.tripId), 'trip:requested', payload);
   }
 
-  // ===== FASE 2: ASSIGNING =====
   assigningStarted(ev: AssigningStartedEvent) {
     const s = ev.snapshot;
     const payload = {
@@ -82,42 +127,91 @@ export class TripRealtimePublisher {
       currentStatus: 'assigning',
     };
 
+    this.logger.log(
+      `[PUB] trip:assigning_started -> ${Rooms.passenger(s.passengerId)} trip=${s.tripId}`,
+    );
+
     this.emitTo(
-      this.passengerGateway.server,
-      `passenger:${s.passengerId}`,
+      '/passengers',
+      Rooms.passenger(s.passengerId),
       'trip:assigning_started',
       payload,
     );
     this.emitTo(
-      this.adminGateway?.server,
-      `trip:${s.tripId}`,
+      '/admin',
+      Rooms.trip(s.tripId),
       'trip:assigning_started',
       payload,
     );
   }
 
+  // ========== OFERTA A DRIVER ==========
   driverOffered(ev: DriverOfferedEvent) {
-    const payload = {
-      tripId: ev.tripId,
+    const ttlSec = Math.max(
+      0,
+      Math.round((Date.parse(ev.ttlExpiresAt) - Date.now()) / 1000),
+    );
+    const payloadForDriver = {
       assignmentId: ev.assignmentId,
-      ttlExpiresAt: ev.ttlExpiresAt,
+      tripId: ev.tripId,
+      ttlSec,
+      expiresAt: ev.ttlExpiresAt,
     };
 
-    this.emitTo(
-      this.driverGateway?.server,
-      `driver:${ev.driverId}`,
-      'trip:assignment:offered',
-      payload,
+    this.logger.log(
+      `[PUB] trip:assignment:offered -> ${Rooms.driver(ev.driverId)} trip=${ev.tripId}`,
     );
 
+    const server = this.wsRegistry.get('/drivers');
+    server?.emit('debug:offered:broadcast', {
+      room: Rooms.driver(ev.driverId),
+      ...payloadForDriver,
+    }); // 👈 DEBUG
     this.emitTo(
-      this.adminGateway?.server,
-      `trip:${ev.tripId}`,
+      '/drivers',
+      Rooms.driver(ev.driverId),
       'trip:assignment:offered',
-      { ...payload, driverId: ev.driverId, vehicleId: ev.vehicleId },
+      payloadForDriver,
+    );
+
+    try {
+      this.driversGw.server
+        .to(Rooms.driver(ev.driverId))
+        .emit('trip:assignment:offered', payloadForDriver);
+    } catch {}
+
+    this.emitTo('/admin', Rooms.trip(ev.tripId), 'trip:assignment:offered', {
+      ...payloadForDriver,
+      driverId: ev.driverId,
+      vehicleId: ev.vehicleId,
+    });
+  }
+
+  // =============== SIN CONDUCTORES (NDF) ===============
+  noDriversFound(ev: NoDriversFoundEvent, passengerId?: string) {
+    const payload = { at: ev.at, tripId: ev.tripId, reason: ev.reason };
+
+    this.logger.log(
+      `[PUB] trip:no_drivers_found -> trip:${ev.tripId} (passenger? ${!!passengerId})`,
+    );
+
+    if (passengerId) {
+      this.emitTo(
+        '/passengers',
+        Rooms.passenger(passengerId),
+        'trip:no_drivers_found',
+        payload,
+      );
+    }
+    this.emitTo(
+      '/admin',
+      Rooms.trip(ev.tripId),
+      'trip:no_drivers_found',
+      payload,
     );
   }
 
+  // ====== ACEPTADO / ASIGNADO / RECHAZADO / EXPIRADO ======
   driverAccepted(ev: DriverAcceptedEvent) {
     const payload = {
       tripId: ev.tripId,
@@ -128,22 +222,26 @@ export class TripRealtimePublisher {
     };
 
     this.emitTo(
-      this.driverGateway?.server,
-      `driver:${ev.driverId}`,
+      '/drivers',
+      Rooms.driver(ev.driverId),
       'trip:assignment:accepted',
       payload,
     );
     this.emitTo(
-      this.adminGateway?.server,
-      `trip:${ev.tripId}`,
+      '/admin',
+      Rooms.trip(ev.tripId),
       'trip:assignment:accepted',
       payload,
     );
   }
 
-  /** Permite (opcionalmente) pasar passengerId desde el listener */
-  driverAssigned(ev: DriverAssignedEvent & { passengerId?: string }) {
-    const payload = {
+  driverAssigned(
+    ev: DriverAssignedEvent & {
+      passengerId?: string;
+      passenger?: PassengerSlimForDriverDto | null;
+    },
+  ) {
+    const basePayload = {
       tripId: ev.tripId,
       driverId: ev.driverId,
       vehicleId: ev.vehicleId,
@@ -151,34 +249,103 @@ export class TripRealtimePublisher {
       currentStatus: 'accepted',
     };
 
-    // passenger (solo si te pasan el id)
+    // Para passenger/admin puedes seguir enviando lo de siempre
     if (ev.passengerId) {
       this.emitTo(
-        this.passengerGateway.server,
-        `passenger:${ev.passengerId}`,
+        '/passengers',
+        Rooms.passenger(ev.passengerId),
         'trip:driver_assigned',
-        payload,
+        basePayload,
       );
     }
 
-    // driver eco
+    // 👉 Para el driver añadimos la info del pasajero
+    const payloadForDriver = {
+      ...basePayload,
+      passenger: ev.passenger ?? null,
+    };
+
     this.emitTo(
-      this.driverGateway?.server,
-      `driver:${ev.driverId}`,
+      '/drivers',
+      Rooms.driver(ev.driverId),
       'trip:driver_assigned',
-      payload,
+      payloadForDriver,
     );
 
-    // admin/monitor
-    this.emitTo(
-      this.adminGateway?.server,
-      `trip:${ev.tripId}`,
-      'trip:driver_assigned',
-      payload,
-    );
+    this.emitTo('/admin', Rooms.trip(ev.tripId), 'trip:driver_assigned', {
+      ...payloadForDriver,
+      passengerId: ev.passengerId ?? null,
+    });
   }
 
-  /** NUEVO: rechazo (normalmente solo admin/metrics) */
+  async emitDriverAcceptedToPassenger(
+    p: DriverAcceptedForPassengerPayload,
+  ): Promise<void> {
+    const server = this.wsRegistry.get('/passengers');
+    const room = `passenger:${p.passengerId}`;
+    const evt1 = 'trip:driver_accepted';
+    const evt2 = 'trip:driver_assigned'; // espejo opcional
+
+    if (!server) {
+      this.logger.warn(
+        `[WS] /passengers server undefined. Skip emit ${evt1} room=${room}`,
+      );
+      return;
+    }
+
+    try {
+      // 🔎 Identificador del server (útil si tienes múltiples instancias)
+      const serverId = String(server as any);
+
+      // 🔢 Tamaño rápido del room (sin promesas)
+      const sizeQuick =
+        (server.sockets as any)?.adapter?.rooms?.get(room)?.size ?? 0;
+      this.logger.debug(
+        `[WS] emitDriverAcceptedToPassenger[quick] room=${room} size=${sizeQuick} trip=${p.tripId} server=${serverId}`,
+      );
+
+      // 🔍 Confirmación precisa (async)
+      try {
+        const sockets = await server.in(room).fetchSockets();
+        this.logger.debug(
+          `[WS] emitDriverAcceptedToPassenger[fetch] room=${room} clients=${sockets.length} trip=${p.tripId} server=${serverId}`,
+        );
+      } catch {
+        /* noop */
+      }
+
+      // 📤 Emit principal
+      this.logger.log(`[PUB] ${evt1} -> ${room} trip=${p.tripId}`);
+      server.to(room).emit(evt1, {
+        tripId: p.tripId,
+        at: p.at,
+        currentStatus: p.currentStatus,
+        driver: p.driver,
+        vehicle: p.vehicle,
+      });
+      this.logger.debug(
+        `[WS] emit ok evt=${evt1} room=${room} trip=${p.tripId}`,
+      );
+
+      // 📤 (Opcional) espejo con el evento que ya usabas
+      this.logger.log(`[PUB] ${evt2} (mirror) -> ${room} trip=${p.tripId}`);
+      server.to(room).emit(evt2, {
+        tripId: p.tripId,
+        at: p.at,
+        currentStatus: p.currentStatus,
+        driver: p.driver,
+        vehicle: p.vehicle,
+      });
+      this.logger.debug(
+        `[WS] emit ok evt=${evt2} room=${room} trip=${p.tripId}`,
+      );
+    } catch (e) {
+      this.logger.warn(
+        `[WS] emitDriverAcceptedToPassenger failed room=${room} trip=${p.tripId}: ${(e as Error).message}`,
+      );
+    }
+  }
+
   driverRejected(ev: DriverRejectedEvent) {
     const payload = {
       tripId: ev.tripId,
@@ -188,17 +355,14 @@ export class TripRealtimePublisher {
       reason: ev.reason ?? null,
       at: ev.at,
     };
-
-    // admin/monitor
     this.emitTo(
-      this.adminGateway?.server,
-      `trip:${ev.tripId}`,
+      '/admin',
+      Rooms.trip(ev.tripId),
       'trip:assignment:rejected',
       payload,
     );
   }
 
-  /** NUEVO: expiración (normalmente solo admin/metrics) */
   assignmentExpired(ev: AssignmentExpiredEvent) {
     const payload = {
       tripId: ev.tripId,
@@ -207,37 +371,10 @@ export class TripRealtimePublisher {
       vehicleId: ev.vehicleId,
       at: ev.at,
     };
-
-    // admin/monitor
     this.emitTo(
-      this.adminGateway?.server,
-      `trip:${ev.tripId}`,
+      '/admin',
+      Rooms.trip(ev.tripId),
       'trip:assignment:expired',
-      payload,
-    );
-  }
-
-  noDriversFound(ev: NoDriversFoundEvent & { passengerId?: string }) {
-    const payload = {
-      tripId: ev.tripId,
-      at: ev.at,
-      reason: ev.reason ?? 'matching_exhausted',
-      currentStatus: 'no_drivers_found',
-    };
-
-    if (ev.passengerId) {
-      this.emitTo(
-        this.passengerGateway.server,
-        `passenger:${ev.passengerId}`,
-        'trip:no_drivers_found',
-        payload,
-      );
-    }
-
-    this.emitTo(
-      this.adminGateway?.server,
-      `trip:${ev.tripId}`,
-      'trip:no_drivers_found',
       payload,
     );
   }
@@ -251,21 +388,31 @@ export class TripRealtimePublisher {
       previousStatus: 'accepted',
       currentStatus: 'arriving',
     };
+
     this.emitTo(
-      this.passengerGateway.server,
-      `passenger:${s.passengerId}`,
+      '/passengers',
+      Rooms.passenger(s.passengerId),
       'trip:arriving_started',
       payload,
     );
+
+    if (s.driverId) {
+      this.emitTo(
+        '/drivers',
+        Rooms.driver(s.driverId),
+        'trip:arriving_started',
+        payload,
+      );
+    }
+
     this.emitTo(
-      this.adminGateway?.server,
-      `trip:${s.tripId}`,
+      '/admin',
+      Rooms.trip(s.tripId),
       'trip:arriving_started',
       payload,
     );
   }
 
-  /** driver en ruta (ETA/posición) → passenger + eco driver + admin */
   driverEnRoute(ev: DriverEnRouteEvent & { passengerId?: string }) {
     const payload = {
       tripId: ev.tripId,
@@ -274,84 +421,71 @@ export class TripRealtimePublisher {
       driverPosition: ev.driverPosition ?? null,
     };
 
+    this.logger.debug(
+      `[PUB] driverEnRoute trip=${ev.tripId} driver=${ev.driverId} eta=${payload.etaMinutes} pos=${payload.driverPosition ? JSON.stringify(payload.driverPosition) : 'null'}`,
+    );
+
     if (ev.passengerId) {
       this.emitTo(
-        this.passengerGateway.server,
-        `passenger:${ev.passengerId}`,
+        '/passengers',
+        Rooms.passenger(ev.passengerId),
         'trip:driver_en_route',
         payload,
       );
     }
+
     this.emitTo(
-      this.driverGateway?.server,
-      `driver:${ev.driverId}`,
+      '/drivers',
+      Rooms.driver(ev.driverId),
       'trip:driver_en_route',
       payload,
     );
-    this.emitTo(
-      this.adminGateway?.server,
-      `trip:${ev.tripId}`,
-      'trip:driver_en_route',
-      { ...payload, driverId: ev.driverId },
-    );
+
+    this.emitTo('/admin', Rooms.trip(ev.tripId), 'trip:driver_en_route', {
+      ...payload,
+      driverId: ev.driverId,
+    });
   }
 
-  /** conductor llegó al pickup */
   driverArrivedPickup(ev: DriverArrivedPickupEvent & { passengerId?: string }) {
-    const payload = {
-      tripId: ev.tripId,
-      at: ev.at,
-      currentStatus: 'arriving',
-    };
-    if (ev.passengerId) {
+    const payload = { tripId: ev.tripId, at: ev.at, currentStatus: 'arriving' };
+    if (ev.passengerId)
       this.emitTo(
-        this.passengerGateway.server,
-        `passenger:${ev.passengerId}`,
+        '/passengers',
+        Rooms.passenger(ev.passengerId),
         'trip:driver_arrived_pickup',
         payload,
       );
-    }
     this.emitTo(
-      this.driverGateway?.server,
-      `driver:${ev.driverId}`,
+      '/drivers',
+      Rooms.driver(ev.driverId),
       'trip:driver_arrived_pickup',
       payload,
     );
-    this.emitTo(
-      this.adminGateway?.server,
-      `trip:${ev.tripId}`,
-      'trip:driver_arrived_pickup',
-      { ...payload, driverId: ev.driverId },
-    );
+    this.emitTo('/admin', Rooms.trip(ev.tripId), 'trip:driver_arrived_pickup', {
+      ...payload,
+      driverId: ev.driverId,
+    });
   }
 
-  /** viaje iniciado */
   tripStarted(ev: TripStartedEvent & { passengerId?: string }) {
     const payload = {
       tripId: ev.tripId,
       at: ev.at,
       currentStatus: 'in_progress',
     };
-    if (ev.passengerId) {
+    if (ev.passengerId)
       this.emitTo(
-        this.passengerGateway.server,
-        `passenger:${ev.passengerId}`,
+        '/passengers',
+        Rooms.passenger(ev.passengerId),
         'trip:started',
         payload,
       );
-    }
-    this.emitTo(
-      this.driverGateway?.server,
-      `driver:${ev.driverId}`,
-      'trip:started',
-      payload,
-    );
-    this.emitTo(
-      this.adminGateway?.server,
-      `trip:${ev.tripId}`,
-      'trip:started',
-      { ...payload, driverId: ev.driverId },
-    );
+    this.emitTo('/drivers', Rooms.driver(ev.driverId), 'trip:started', payload);
+    this.emitTo('/admin', Rooms.trip(ev.tripId), 'trip:started', {
+      ...payload,
+      driverId: ev.driverId,
+    });
   }
 
   tripCompleted(ev: TripCompletedEvent & { passengerId?: string | null }) {
@@ -363,31 +497,19 @@ export class TripRealtimePublisher {
       fareTotal: ev.fareTotal,
       currency: ev.currency,
     };
-
-    // passenger (si lo conocemos)
-    if (ev.passengerId) {
+    if (ev.passengerId)
       this.emitTo(
-        this.passengerGateway.server,
-        `passenger:${ev.passengerId}`,
+        '/passengers',
+        Rooms.passenger(ev.passengerId),
         'trip:completed',
         payload,
       );
-    }
-
-    // driver (eco)
     this.emitTo(
-      this.driverGateway?.server,
-      `driver:${ev.driverId}`,
+      '/drivers',
+      Rooms.driver(ev.driverId),
       'trip:completed',
       payload,
     );
-
-    // admin/monitor (sala por trip)
-    this.emitTo(
-      this.adminGateway?.server,
-      `trip:${ev.tripId}`,
-      'trip:completed',
-      payload,
-    );
+    this.emitTo('/admin', Rooms.trip(ev.tripId), 'trip:completed', payload);
   }
 }

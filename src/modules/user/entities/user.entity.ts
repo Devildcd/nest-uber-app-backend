@@ -1,6 +1,7 @@
 import { AuthCredentials } from 'src/modules/user/entities/auth-credentials.entity';
 import { Session } from 'src/modules/auth/entities/session.entity';
 import { Vehicle } from 'src/modules/vehicles/entities/vehicle.entity';
+
 import {
   Column,
   CreateDateColumn,
@@ -9,8 +10,10 @@ import {
   Index,
   OneToMany,
   OneToOne,
+  Point,
   //   ManyToOne,
   PrimaryGeneratedColumn,
+  UpdateDateColumn,
 } from 'typeorm';
 import { DriverProfile } from 'src/modules/driver-profiles/entities/driver-profile.entity';
 
@@ -66,8 +69,14 @@ export class User {
   @Column({ nullable: true })
   profilePictureUrl?: string;
 
-  @Column({ type: 'json', nullable: true })
-  currentLocation?: { latitude: number; longitude: number };
+  @Column({
+    name: 'currentLocation',
+    type: 'geography',
+    spatialFeatureType: 'Point',
+    srid: 4326,
+    nullable: true,
+  })
+  currentLocation?: Point | null;
 
   @OneToMany(() => Vehicle, (vehicle) => vehicle.driver)
   vehicles: Vehicle[];
@@ -86,6 +95,9 @@ export class User {
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
+
+  @UpdateDateColumn({ type: 'timestamptz' })
+  updatedAt: Date;
 
   @DeleteDateColumn({ type: 'timestamptz', nullable: true })
   deletedAt?: Date;

@@ -14,6 +14,7 @@ import { CashColletionsPointsModule } from '../cash_colletions_points/cash_colle
 import { UserModule } from '../user/user.module';
 import { VehiclesModule } from '../vehicles/vehicles.module';
 import { PresenceSweeperJob } from '../../core/domain/jobs/presence-sweeper.job';
+import { DriverLocationService } from './services/driver-location.service';
 
 @Module({
   imports: [
@@ -30,7 +31,12 @@ import { PresenceSweeperJob } from '../../core/domain/jobs/presence-sweeper.job'
     DriverAvailabilityService,
     DriverAvailabilityRepository,
     PresenceSweeperJob,
+    DriverLocationService,
   ],
-  exports: [DriverAvailabilityService, DriverAvailabilityRepository],
+  exports: [
+    DriverAvailabilityService,
+    DriverAvailabilityRepository,
+    DriverLocationService,
+  ],
 })
 export class DriversAvailabilityModule {}

@@ -24,26 +24,26 @@ export class TokenService {
       secret: process.env.JWT_ACCESS_SECRET as string,
       expiresIn: process.env.JWT_ACCESS_EXPIRES_IN as string,
       issuer: process.env.JWT_ISSUER,
-      audience: process.env.JWT_AUDIENCE,
+      // audience: process.env.JWT_AUDIENCE,
     };
 
     this.refreshSignOptions = {
       secret: process.env.JWT_REFRESH_SECRET as string,
       expiresIn: process.env.JWT_REFRESH_EXPIRES_IN as string,
       issuer: process.env.JWT_ISSUER,
-      audience: process.env.JWT_AUDIENCE,
+      // audience: process.env.JWT_AUDIENCE,
     };
 
     this.verifyAccessOptions = {
       secret: this.accessSignOptions.secret,
       issuer: this.accessSignOptions.issuer,
-      audience: this.accessSignOptions.audience,
+      // audience: this.accessSignOptions.audience,
     };
 
     this.verifyRefreshOptions = {
       secret: this.refreshSignOptions.secret,
       issuer: this.refreshSignOptions.issuer,
-      audience: this.refreshSignOptions.audience,
+      // audience: this.refreshSignOptions.audience,
     };
   }
 
