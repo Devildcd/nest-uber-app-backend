@@ -1,11 +1,12 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { DataSource, Repository } from 'typeorm';
-import { LoginDto } from '../dto/login.dto';
+import { AppAudience, LoginDto } from '../dto/login.dto';
 import { UserService } from 'src/modules/user/services/user.service';
 import { TokenService } from './token.service';
 import { Session, SessionType } from '../entities/session.entity';
@@ -28,6 +29,15 @@ import {
   SessionRevokedEvent,
   UserLoggedInEvent,
 } from 'src/core/domain/events/auth.events';
+import { UserStatus, UserType } from 'src/modules/user/entities/user.entity';
+
+//Mapea audiencia → rol esperado
+const AUDIENCE_TO_USER_TYPE: Record<AppAudience, UserType> = {
+  [AppAudience.DRIVER_APP]: UserType.DRIVER,
+  [AppAudience.PASSENGER_APP]: UserType.PASSENGER,
+  [AppAudience.ADMIN_PANEL]: UserType.ADMIN,
+  [AppAudience.API_CLIENT]: UserType.ADMIN,
+};
 
 @Injectable()
 export class AuthService {
@@ -54,7 +64,7 @@ export class AuthService {
     await qr.startTransaction();
 
     try {
-      // 1) Validar credenciales
+      // 1) Credenciales
       const user = await this.usersService.validateUserCredentials(
         {
           email: dto.email,
@@ -66,38 +76,57 @@ export class AuthService {
       if (!user)
         throw new UnauthorizedException('Email o contraseña inválidos');
 
-      // 2) Generar refresh token primero para obtener jti (o generar jti y pasarlo)
+      // 1.1) Estado del usuario
+      if (user.status !== UserStatus.ACTIVE) {
+        throw new ForbiddenException('La cuenta no está activa');
+      }
+
+      // 1.2) Verificación de rol según audiencia
+      const requiredUserType = AUDIENCE_TO_USER_TYPE[dto.appAudience];
+      if (requiredUserType && user.userType !== requiredUserType) {
+        // Mensaje claro para no filtrar existencias
+        throw new ForbiddenException('No tienes permisos para esta aplicación');
+      }
+
+      // (Opcional) si envías expectedUserType, valida que coincida con el real
+      if (dto.expectedUserType && dto.expectedUserType !== user.userType) {
+        throw new ForbiddenException('Rol inválido para este usuario');
+      }
+
+      // 2) Refresh token (para jti)
       const {
         token: refreshToken,
         jti,
-        expiresIn: refreshTtl, // => TTL en milisegundos (según tu tokenService)
+        expiresIn: refreshTtl,
       } = this.tokenService.createRefreshToken({
         sub: user.id,
         email: user.email,
         phoneNumber: user.phoneNumber,
       });
 
-      // 3) Crear access token que incluya referencia a la sesión (sid/jti)
+      // 3) Access token (incluye rol + sid + aud)
       const { token: accessToken, expiresIn: accessTtl } =
         this.tokenService.createAccessToken({
           sub: user.id,
           email: user.email,
           phoneNumber: user.phoneNumber,
           sid: jti,
+          aud: dto.appAudience, // 👈 quién consumirá este token
+          userType: user.userType, // 👈 rol visible al front
+          // scope: ['trips:read', 'trips:write'] // si manejas permisos finos
         });
 
-      // calcular timestamps absolutos (ms desde epoch)
       const now = Date.now();
       const accessTokenExpiresAt = now + accessTtl;
       const refreshTokenExpiresAt = now + refreshTtl;
 
-      // 3) Contexto cliente
+      // 4) Contexto cliente + sessionType
       const context = this.deviceService.getClientContext(req);
       const sessionType =
         (dto.sessionType as SessionType) ??
         this.deviceService.inferSessionType(context.device.deviceType);
 
-      // 5) Preparar & persistir sesión (hash del refresh token)
+      // 5) Persistir sesión
       const sessionRepo: Repository<Session> =
         qr.manager.getRepository(Session);
       const refreshTokenHash = await argon2.hash(refreshToken);
@@ -116,12 +145,13 @@ export class AuthService {
         revoked: false,
         lastSuccessfulLoginAt: new Date(),
         lastActivityAt: new Date(),
+        appAudience: dto.appAudience,
       });
 
       await sessionRepo.save(newSession);
       await qr.commitTransaction();
 
-      // 👉 Evento de dominio post-commit
+      // 6) Evento
       const ev: UserLoggedInEvent = {
         userId: user.id,
         userType: user.userType,
@@ -131,15 +161,26 @@ export class AuthService {
         deviceInfo: context.device,
         ipAddress: context.ip,
         userAgent: context.userAgent,
+        // aud: dto.appAudience
       };
       this.eventEmitter.emit(AuthEvents.UserLoggedIn, ev);
 
-      // 6) Devolver + cookie si WEB / API_CLIENT
+      // 7) Respuesta + cookie si WEB
       const baseResponse: any = {
         accessToken,
         sessionType,
-        accessTokenExpiresAt, // ms since epoch
-        refreshTokenExpiresAt, // ms since epoch
+        accessTokenExpiresAt,
+        refreshTokenExpiresAt,
+        userType: user.userType, // 👈 facilita al front
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          phoneNumber: user.phoneNumber,
+          userType: user.userType,
+          profilePictureUrl: user.profilePictureUrl,
+          preferredLanguage: user.preferredLanguage,
+        },
       };
 
       if (sessionType === SessionType.WEB && res) {
@@ -157,16 +198,17 @@ export class AuthService {
               : undefined,
           path: process.env.COOKIE_PATH ?? '/',
         });
-        // no enviamos refreshToken en body (está en cookie), pero sí las expiraciones
         return { ...baseResponse };
       }
 
-      // mobile: devolvemos también el refreshToken en body
       return { ...baseResponse, refreshToken };
     } catch (err) {
       await qr.rollbackTransaction();
-      if (err instanceof UnauthorizedException) throw err;
-
+      if (
+        err instanceof UnauthorizedException ||
+        err instanceof ForbiddenException
+      )
+        throw err;
       this.logger.error('Login error', err);
       throw new BadRequestException('Error inesperado durante el login');
     } finally {
@@ -177,15 +219,17 @@ export class AuthService {
   /**
    * Refresca el par de tokens dado un refreshToken.
    * - Verifica firma y jti
-   * - Comprueba sesión no revocada
-   * - Gira jti + token en BD
-   * - Devuelve nuevo accessToken y renueva cookie si se pasa Response
+   * - Comprueba sesión no revocada / no expirada
+   * - Verifica reuse (hash) y estado del usuario
+   * - Revalida rol según audiencia guardada en la sesión
+   * - Gira jti y firma access con { aud, userType } consistentes
+   * - Renueva cookie si se pasa Response (WEB/API_CLIENT)
    */
   async refreshTokens(
     oldRefreshToken: string,
     res?: ExpressResponse,
   ): Promise<RefreshTokensResult> {
-    // 1) Verificar firma y extraer payload
+    // 1) Verificar firma y extraer payload mínimo
     const payload = this.tokenService.verifyRefreshToken<{
       sub: string;
       email?: string;
@@ -193,7 +237,7 @@ export class AuthService {
       jti: string;
     }>(oldRefreshToken);
 
-    // 2) Buscar la sesión actual y validar estado
+    // 2) Buscar la sesión y validar estado
     const session = await this.sessionRepo.findOne({
       where: { jti: payload.jti },
       relations: ['user'],
@@ -217,7 +261,7 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token inválido o revocado');
     }
 
-    // 2b) Verificar que el refresh token entrante coincide con el hash guardado
+    // 2b) Anti-reuse: comparar contra hash
     let matched = false;
     try {
       matched = await argon2.verify(session.refreshTokenHash, oldRefreshToken);
@@ -226,7 +270,6 @@ export class AuthService {
     }
 
     if (!matched) {
-      // posible token reuse/tampering: revocar la sesión y rechazar inmediatamente
       this.logger.warn(
         'Possible refresh token reuse detected — revoking session',
         {
@@ -239,16 +282,15 @@ export class AuthService {
       (session as any).revokedAt = new Date();
       (session as any).revokedReason = 'token_reuse_detected';
       session.lastActivityAt = new Date();
-
-      // intentamos persistir la revocación pero no fallaremos si hay error
-      await this.sessionRepo.save(session).catch((e) => {
-        this.logger.error(
-          'Failed to save session while handling token reuse',
-          e,
+      await this.sessionRepo
+        .save(session)
+        .catch((e) =>
+          this.logger.error(
+            'Failed to save session while handling token reuse',
+            e,
+          ),
         );
-      });
 
-      // 🔔 Evento de dominio: sesión revocada por reuse/tampering
       this.emitSafely<SessionRevokedEvent>(AuthEvents.SessionRevoked, {
         userId: session.user?.id ?? payload.sub,
         sid: session.jti,
@@ -259,7 +301,7 @@ export class AuthService {
       throw new UnauthorizedException('Refresh token inválido o revocado');
     }
 
-    // 2c) obtener datos canónicos de usuario
+    // 2c) Usuario canónico
     let user = session.user;
     if (!user) {
       const foundUser = await this.userRepository.findOne({
@@ -275,14 +317,44 @@ export class AuthService {
       user = foundUser;
     }
 
-    // 3) Generar nuevos tokens usando datos canónicos del usuario (no los del token entrante)
+    // 2d) Usuario ACTIVO
+    if (user.status !== UserStatus.ACTIVE) {
+      session.revoked = true;
+      (session as any).revokedAt = new Date();
+      (session as any).revokedReason = 'user_inactive_on_refresh';
+      await this.sessionRepo.save(session).catch(() => {});
+      throw new UnauthorizedException('Cuenta inactiva');
+    }
+
+    // 2e) Audiencia guardada en la sesión (¡debe haberse persistido en login!)
+    const appAudience = session.appAudience as AppAudience | undefined;
+    if (!appAudience) {
+      // Si por compatibilidad antigua no la tienes, puedes:
+      // - Inferirla (no recomendado), o
+      // - Fallar explícitamente para no firmar un access inconsistente.
+      this.logger.error(
+        'Session missing appAudience; cannot issue coherent access token',
+        { sid: session.jti },
+      );
+      throw new UnauthorizedException('Sesión inválida (audiencia ausente)');
+    }
+
+    // 2f) Revalidar rol según audiencia (como en login)
+    const requiredUserType = AUDIENCE_TO_USER_TYPE[appAudience];
+    if (requiredUserType && user.userType !== requiredUserType) {
+      session.revoked = true;
+      (session as any).revokedAt = new Date();
+      (session as any).revokedReason = 'role_mismatch_on_refresh';
+      await this.sessionRepo.save(session).catch(() => {});
+      throw new UnauthorizedException('Refresh token inválido o revocado');
+    }
+
+    // 3) Generar nuevos tokens (con datos canónicos)
     const refreshPayload: {
       sub: string;
       email?: string;
       phoneNumber?: string;
-    } = {
-      sub: user.id,
-    };
+    } = { sub: user.id };
     if (user.email) refreshPayload.email = user.email;
     if (user.phoneNumber) refreshPayload.phoneNumber = user.phoneNumber;
 
@@ -292,29 +364,39 @@ export class AuthService {
       expiresIn: refreshTtl,
     } = this.tokenService.createRefreshToken(refreshPayload);
 
+    // Access coherente con login: incluye { sid, aud, userType }
     const accessPayload: {
       sub: string;
       email?: string;
       phoneNumber?: string;
-      sid?: string;
-    } = { sub: user.id, sid: newJti };
+      sid: string;
+      aud: AppAudience;
+      userType: UserType;
+    } = {
+      sub: user.id,
+      sid: newJti,
+      aud: appAudience,
+      userType: user.userType,
+    };
     if (user.email) accessPayload.email = user.email;
     if (user.phoneNumber) accessPayload.phoneNumber = user.phoneNumber;
 
     const { token: accessToken, expiresIn: accessTtl } =
       this.tokenService.createAccessToken(accessPayload);
 
-    // 4) Actualizar la sesión con el nuevo jti/tokens y expiraciones
+    // 4) Rotar sesión: nuevo jti + expiraciones
     const oldSid = session.jti;
     session.jti = newJti;
     session.refreshTokenHash = await argon2.hash(refreshToken);
     session.refreshTokenExpiresAt = new Date(Date.now() + refreshTtl);
     session.accessTokenExpiresAt = new Date(Date.now() + accessTtl);
     session.lastActivityAt = new Date();
+    // nos aseguramos de que la audiencia siga guardada
+    if (!session.appAudience) session.appAudience = appAudience;
 
     await this.sessionRepo.save(session);
 
-    // 🔔 Evento de dominio: sesión refrescada (post-save)
+    // Evento
     this.emitSafely<SessionRefreshedEvent>(AuthEvents.SessionRefreshed, {
       userId: user.id,
       oldSid,
@@ -322,16 +404,18 @@ export class AuthService {
       at: new Date().toISOString(),
     });
 
-    // 5) Preparar la respuesta base (timestamps en ms)
+    // 5) Respuesta base
     const baseResponse: RefreshTokensResult = {
       accessToken,
       accessTokenExpiresAt: session.accessTokenExpiresAt.getTime(),
       refreshTokenExpiresAt: session.refreshTokenExpiresAt.getTime(),
       sid: session.jti,
       sessionType: session.sessionType,
+      // (opcional) devolver userType si te ayuda en el cliente:
+      // userType: user.userType as any
     };
 
-    // 6) Renueva cookie cuando corresponde (WEB / API_CLIENT)
+    // 6) Cookie para WEB/API_CLIENT
     if (res) {
       try {
         res.cookie('refreshToken', refreshToken, {
@@ -349,18 +433,13 @@ export class AuthService {
           path: process.env.COOKIE_PATH ?? '/',
         });
       } catch (err) {
-        // no queremos que un error al setear la cookie rompa el refresh
         this.logger.error('Failed to set refresh cookie', err);
       }
       return baseResponse;
     }
 
-    // 7) Mobile / clientes sin cookie: devolvemos refreshToken en body
-    const result: RefreshTokensResult = {
-      ...baseResponse,
-      refreshToken,
-    };
-    return result;
+    // 7) Mobile / sin cookie: devuelve refreshToken en body
+    return { ...baseResponse, refreshToken };
   }
 
   /**

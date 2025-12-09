@@ -1,3 +1,4 @@
+import { WsCoreModule } from './core/ws/ws-core.module';
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -20,7 +21,6 @@ import { OrdersModule } from './modules/orders/orders.module';
 import { DriversAvailabilityModule } from './modules/drivers-availability/drivers-availability.module';
 import { VehicleServiceClassesModule } from './modules/vehicle-service-classes/vehicle-service-classes.module';
 import { DriverBalanceModule } from './modules/driver_balance/driver_balance.module';
-import { WalletMovementsModule } from './modules/wallet-movements/wallet-movements.module';
 import { CashColletionsPointsModule } from './modules/cash_colletions_points/cash_colletions_points.module';
 import { OutboxModule } from './infrastructure/outbox/outbox.module';
 import { QueueModule } from './infrastructure/queue/queue.module';
@@ -31,6 +31,7 @@ import { RealtimeModule } from './realtime/realtime.module';
 import { ScheduleModule } from '@nestjs/schedule';
 @Module({
   imports: [
+    WsCoreModule,
     MailModule,
     SmsModule,
     AuthModule,
@@ -48,7 +49,6 @@ import { ScheduleModule } from '@nestjs/schedule';
     DriversAvailabilityModule,
     VehicleServiceClassesModule,
     DriverBalanceModule,
-    WalletMovementsModule,
     CashColletionsPointsModule,
     OutboxModule,
     QueueModule,

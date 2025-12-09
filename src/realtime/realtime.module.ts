@@ -15,9 +15,19 @@ import { PassengerGateway } from './gateways/passenger.gateway';
 import { TripRealtimePublisher } from './publishers/trip-realtime.publisher';
 import { TripEventsListener } from './listeners/trip-events.listener';
 import { TripModule } from 'src/modules/trip/trip.module';
+import { TripAssigningOrchestrator } from './orchestrators/trip-assigning.orchestrator';
+import { DriverAssignedAutoArrivingOrchestrator } from './orchestrators/driver-assigned-auto-arriving.orchestrator';
+import { AssignmentExpiryListener } from './listeners/assignment-expiry.listener';
+import { WsCoreModule } from 'src/core/ws/ws-core.module';
 
 @Module({
-  imports: [AuthModule, UserModule, DriversAvailabilityModule, TripModule],
+  imports: [
+    AuthModule,
+    UserModule,
+    DriversAvailabilityModule,
+    TripModule,
+    WsCoreModule,
+  ],
   providers: [
     DriverAuthGateway,
     WsJwtGuard,
@@ -31,7 +41,15 @@ import { TripModule } from 'src/modules/trip/trip.module';
     PassengerGateway,
     TripRealtimePublisher,
     TripEventsListener,
+    TripAssigningOrchestrator,
+    DriverAssignedAutoArrivingOrchestrator,
+    AssignmentExpiryListener,
   ],
-  exports: [PassengerGateway, TripRealtimePublisher],
+  exports: [
+    TripRealtimePublisher,
+    PassengerGateway,
+    DriverAvailabilityGateway,
+    AdminGateway,
+  ],
 })
 export class RealtimeModule {}

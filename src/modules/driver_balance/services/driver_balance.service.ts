@@ -32,6 +32,7 @@ import { TransactionRepository } from 'src/modules/transactions/repositories/tra
 import { CreateDriverBalanceDto } from '../dto/create-driver_balance.dto';
 import {
   formatErrorResponse,
+  formatSuccessResponse,
   handleServiceError,
 } from 'src/common/utils/api-response.utils';
 import { DriverBalanceResponseDto } from '../dto/driver-balance-response.dto';
@@ -43,6 +44,8 @@ import { CreateCashTopupDto } from '../dto/create-cash-topup.dto';
 import { ConfirmCashTopupDto } from '../dto/confirm-cash-topup.dto';
 import { BlockDriverWalletDto } from '../dto/block-driver-wallet.dto';
 import { UnblockDriverWalletDto } from '../dto/unblock-driver-wallet.dto';
+import { PaginationDto } from 'src/common/dto/pagination.dto';
+import { WalletMovementQueryDto } from '../dto/wallet-movements-query.dto';
 
 function toAmount(s: string): number {
   const n = Number(s);
@@ -645,6 +648,76 @@ export class DriverBalanceService {
         error,
         `WalletsService.unblockDriverWallet (driverId: ${driverId})`,
       );
+    }
+  }
+
+  /** Obtener saldo de wallet por driverId (lectura simple, sin lock) */
+  async getDriverWalletBalance(
+    driverId: string,
+  ): Promise<DriverBalanceResponseDto> {
+    try {
+      const wallet = await this.repo.getByDriverIdOrThrow(driverId);
+      const data = this.toResponseDto(wallet);
+      return data;
+    } catch (error) {
+      throw handleServiceError(
+        this.logger,
+        error,
+        `DriverBalanceService.getDriverWalletBalance (driverId: ${driverId})`,
+      );
+    }
+  }
+
+  async findAllMovements(
+    pagination: PaginationDto,
+    walletId: string,
+    filters?: WalletMovementQueryDto,
+  ): Promise<ApiResponse<WalletMovement[]>> {
+    try {
+      // 1) Validar existencia de la wallet (usa manager si viene)
+      const walletExists = await this.repo.findOne({
+        where: { id: walletId },
+      });
+      if (!walletExists) {
+        throw new NotFoundException(
+          formatErrorResponse('WALLET_NOT_FOUND', 'No existe la wallet.', {
+            walletId,
+          }),
+        );
+      }
+      const [items, total] = await this.movementRepo.findAllPaginated(
+        pagination,
+        walletId,
+        filters,
+      );
+      return formatSuccessResponse<WalletMovement[]>(
+        'Wallet movements retrieved successfully',
+        items,
+        { total, page: pagination.page ?? 1, limit: pagination.limit ?? 10 },
+      );
+    } catch (error: any) {
+      this.logger.error(
+        'findAll failed',
+        (error instanceof Error ? error.stack : undefined) ||
+          (typeof error === 'object' && 'message' in error
+            ? (error as { message: string }).message
+            : String(error)),
+      );
+
+      const typedError = error as {
+        code?: string;
+        message?: string;
+        stack?: string;
+      };
+
+      return {
+        ...formatErrorResponse<WalletMovement[]>(
+          'Error fetching wallet movements',
+          typedError.code,
+          typedError,
+        ),
+        data: [],
+      };
     }
   }
 }

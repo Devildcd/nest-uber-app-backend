@@ -8,6 +8,7 @@ import {
   HttpStatus,
   Logger,
   ParseUUIDPipe,
+  Query,
 } from '@nestjs/common';
 import { DriverBalanceService } from '../services/driver_balance.service';
 import { DriverBalanceDepositDto } from '../../driver_balance/dto/update-driver-balance-deposit.dto';
@@ -16,12 +17,15 @@ import {
   ApiBody,
   ApiConflictResponse,
   ApiCreatedResponse,
+  ApiForbiddenResponse,
   ApiInternalServerErrorResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { CreateDriverBalanceDto } from '../dto/create-driver_balance.dto';
 import { CreateDriverBalanceResponseDto } from '../dto/create-driver-balance-response.dto';
@@ -33,6 +37,12 @@ import { CashTopupCreatedResponseDto } from '../dto/cash-topup-created-response.
 import { ConfirmCashTopupDto } from '../dto/confirm-cash-topup.dto';
 import { CashTopupConfirmedResponseDto } from '../dto/cash-topup-confirmed-response.dto';
 import { Public } from 'src/modules/auth/decorators/public.decorator';
+import { DriverBalanceResponseDto } from '../dto/driver-balance-response.dto';
+import { ApiResponse } from 'src/common/interfaces/api-response.interface';
+import { PaginationDto } from 'src/common/dto/pagination.dto';
+import { WalletMovementQueryDto } from '../dto/wallet-movements-query.dto';
+import { plainToInstance } from 'class-transformer';
+import { WalletMovementsListResponseDto } from '../dto/wallet-movements-list-response.dto';
 
 @ApiTags('drivers-balance')
 @Controller('drivers-balance')
@@ -122,11 +132,95 @@ export class DriverBalanceController {
     return formatSuccessResponse('Depósito confirmado.', res);
   }
 
-  /**
-   * Consultar el saldo actual de la billetera de un driver.
-   */
-  /*@Get(':driverId')
-  async getBalance(@Param('driverId') driverId: string) {
-    return this.driverBalanceService.getBalance(driverId);
-  }*/
+  //Obtener saldo del wallet de un driver
+  @Public()
+  @Get(':driverId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Obtener saldo del wallet de un driver',
+    description:
+      'Devuelve el balance actual, montos retenidos, totales históricos y metadatos básicos.',
+  })
+  @ApiParam({ name: 'driverId', description: 'UUID del driver' })
+  @ApiOkResponse({
+    description: 'Saldo obtenido',
+    type: DriverBalanceResponseDto,
+  })
+  @ApiNotFoundResponse({ description: 'Wallet no encontrado' })
+  @ApiBadRequestResponse({ description: 'Parámetros inválidos' })
+  @ApiInternalServerErrorResponse({ description: 'Error interno' })
+  async getWalletBalance(
+    @Param('driverId', new ParseUUIDPipe({ version: '4' })) driverId: string,
+  ): Promise<ApiResponse<DriverBalanceResponseDto>> {
+    const wallet =
+      await this.driverBalanceService.getDriverWalletBalance(driverId);
+    return formatSuccessResponse('Saldo obtenido.', wallet);
+  }
+
+  @Public()
+  @Get(':walletId/movements')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Get paginated wallet movements by walletId',
+  })
+  @ApiParam({
+    name: 'walletId',
+    description: 'UUID de la wallet (driver_balance.id)',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 10 })
+  @ApiQuery({ name: 'transactionId', required: false, type: String })
+  @ApiQuery({
+    name: 'from',
+    required: false,
+    type: String,
+    description: 'ISO-8601 desde',
+  })
+  @ApiQuery({
+    name: 'to',
+    required: false,
+    type: String,
+    description: 'ISO-8601 hasta',
+  })
+  @ApiQuery({ name: 'search', required: false, type: String })
+  @ApiQuery({
+    name: 'sortBy',
+    required: false,
+    enum: ['createdAt', 'amount'],
+    example: 'createdAt',
+  })
+  @ApiQuery({
+    name: 'sortDir',
+    required: false,
+    enum: ['asc', 'desc'],
+    example: 'desc',
+  })
+  @ApiOkResponse({
+    description: 'Wallet movements retrieved successfully',
+    type: WalletMovementsListResponseDto,
+  })
+  @ApiUnauthorizedResponse({ description: 'Authentication required' })
+  @ApiForbiddenResponse({ description: 'Forbidden' })
+  @ApiBadRequestResponse({ description: 'Invalid query params' })
+  @ApiNotFoundResponse({ description: 'Wallet not found' })
+  @ApiInternalServerErrorResponse({ description: 'Internal error' })
+  async findAll(
+    @Param('walletId', new ParseUUIDPipe({ version: '4' })) walletId: string,
+    @Query() pagination: PaginationDto,
+    @Query() filters?: WalletMovementQueryDto,
+  ): Promise<WalletMovementsListResponseDto> {
+    this.logger.log(
+      `Fetching wallet movements — walletId=${walletId}, page=${pagination.page}, limit=${pagination.limit}`,
+    );
+
+    const apiResp = await this.driverBalanceService.findAllMovements(
+      pagination,
+      walletId,
+      filters,
+    );
+
+    return plainToInstance(WalletMovementsListResponseDto, apiResp, {
+      excludeExtraneousValues: true,
+    });
+  }
 }

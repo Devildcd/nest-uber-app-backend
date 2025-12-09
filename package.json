@@ -20,6 +20,7 @@
     "ws:test:da:driver": "node scripts/ws-da-driver.js",
     "ws:test:da:admin": "node scripts/ws-da-admin.js",
     "ws:test:trip:passenger": "node scripts/ws-trip-passenger.js",
+    "ws:test:trip:flow": "node scripts/ws-test-trip-flow.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",

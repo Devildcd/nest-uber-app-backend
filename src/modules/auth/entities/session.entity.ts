@@ -81,6 +81,9 @@ export class Session {
   @Column({ unique: true })
   jti: string;
 
+  @Column({ type: 'varchar', length: 50, nullable: true })
+  appAudience?: string;
+
   @Column({ type: 'boolean', default: false })
   revoked: boolean;
 }

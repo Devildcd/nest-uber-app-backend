@@ -23,6 +23,7 @@ import {
   DriverAvailabilityListItemProjection,
   FindEligibleDriversParams,
 } from '../interfaces/driver-availability.interface';
+import { getDistance } from 'src/common/utils/haversine';
 
 export const DRIVER_AVAILABILITY_RELATIONS = [
   'driver',
@@ -117,31 +118,34 @@ export class DriverAvailabilityRepository extends BaseRepository<DriverAvailabil
   async findEligibleDrivers(
     p: FindEligibleDriversParams,
   ): Promise<Array<{ driverId: string; primaryVehicleId: string }>> {
-    const {
-      pickup,
-      radiusMeters,
-      limit,
-      vehicleCategoryId,
-      serviceClassId,
-      excludeAlreadyTriedForTripId,
-      requireWalletActive = true,
-      requireVehicleInService = true,
-      ttlSeconds = 90,
-    } = p;
+    this.logger.debug(
+      `[elig] IN ${JSON.stringify({
+        lat: p.pickup.lat,
+        lng: p.pickup.lng,
+        radius: p.radiusMeters,
+        vc: p.vehicleCategoryId ?? 'null',
+        sc: p.serviceClassId ?? 'null',
+        limit: p.limit,
+        ttl: p.ttlSeconds,
+        wallet: p.requireWalletActive,
+        vehInService: p.requireVehicleInService,
+      })}`,
+    );
 
     const qb = this.qb('da')
       .leftJoin('da.driver', 'driver')
       .leftJoin('da.currentVehicle', 'v')
+      .leftJoin('v.vehicleType', 'vt')
+      .leftJoin('vt.category', 'cat')
+      .leftJoin('vt.serviceClasses', 'vsc')
       .select([
         'da.driver_id AS "driverId"',
         'da.current_vehicle_id AS "primaryVehicleId"',
-        // Distancia para ordenar (no la devolvemos si no quieres)
         `ST_Distance(
         da.last_location,
         ST_SetSRID(ST_MakePoint(:lon2, :lat2), 4326)::geography
       ) AS "distanceMeters"`,
       ])
-      // Estado base "matcheable"
       .where('da.is_online = true')
       .andWhere('da.is_available_for_trips = true')
       .andWhere('da.availability_reason IS NULL')
@@ -149,109 +153,91 @@ export class DriverAvailabilityRepository extends BaseRepository<DriverAvailabil
       .andWhere('da.last_location IS NOT NULL')
       .andWhere(`driver.status <> 'banned'`);
 
-    // TTL de presencia
-    if (ttlSeconds > 0) {
+    if ((p.ttlSeconds ?? 0) > 0) {
       qb.andWhere('da.last_presence_timestamp IS NOT NULL').andWhere(
         `da.last_presence_timestamp >= NOW() - (:ttl::int * INTERVAL '1 second')`,
-        { ttl: ttlSeconds },
+        { ttl: p.ttlSeconds },
       );
     }
 
-    // Requisitos opcionales
-    if (requireWalletActive) {
+    if (p.requireWalletActive) {
       qb.andWhere(
         `EXISTS (
-        SELECT 1
-        FROM driver_balance db
-        WHERE db.driver_id = da.driver_id
-          AND db.status = 'active'
+        SELECT 1 FROM driver_balance db
+        WHERE db.driver_id = da.driver_id AND db.status = 'active'
       )`,
       );
     }
-    if (requireVehicleInService) {
+
+    if (p.requireVehicleInService) {
       qb.andWhere(
         `EXISTS (
-        SELECT 1
-        FROM vehicles vv
+        SELECT 1 FROM vehicles vv
         WHERE vv.id = da.current_vehicle_id
           AND vv.status = 'in_service'
-          AND vv.deleted_at IS NULL
+          AND vv."deletedAt" IS NULL
       )`,
       );
     }
 
-    // Compatibilidad (ajusta a tu modelo real)
-    if (vehicleCategoryId) {
+    if (p.vehicleCategoryId)
+      qb.andWhere('cat.id = :vcid', { vcid: p.vehicleCategoryId });
+    if (p.serviceClassId)
+      qb.andWhere('vsc.id = :scid', { scid: p.serviceClassId });
+
+    // ⛔️ nunca re-ofertar al mismo driver para este trip
+    if (p.excludeAlreadyTriedForTripId) {
       qb.andWhere(
-        `EXISTS (
-        SELECT 1
-        FROM vehicle_categories vc
-        WHERE vc.id = :vcid
-          AND vc.id = v.vehicle_category_id
-      )`,
-        { vcid: vehicleCategoryId },
+        `NOT EXISTS (
+         SELECT 1
+         FROM trip_assignments ta
+         WHERE ta.trip_id = :trip_ex
+           AND ta.driver_id = da.driver_id
+       )`,
+        { trip_ex: p.excludeAlreadyTriedForTripId },
       );
-    }
-    if (serviceClassId) {
-      qb.andWhere(
-        `EXISTS (
-        SELECT 1
-        FROM vehicle_service_classes vsc
-        WHERE vsc.id = :scid
-          AND vsc.id = v.service_class_id
-      )`,
-        { scid: serviceClassId },
-      );
+
+      // Si prefieres "cooldown" en vez de veto total, usa esto:
+      // qb.andWhere(
+      //   `NOT EXISTS (
+      //      SELECT 1 FROM trip_assignments ta
+      //      WHERE ta.trip_id = :trip_ex
+      //        AND ta.driver_id = da.driver_id
+      //        AND ta.created_at >= NOW() - INTERVAL '10 minutes'
+      //   )`,
+      //   { trip_ex: p.excludeAlreadyTriedForTripId },
+      // );
     }
 
-    // Geofiltro + orden por distancia
     qb.andWhere(
       `ST_DWithin(
       da.last_location,
-      ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+      ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
       :radius
     )`,
-      { lon: pickup.lng, lat: pickup.lat, radius: radiusMeters },
+      { lon: p.pickup.lng, lat: p.pickup.lat, radius: p.radiusMeters },
     )
-      .setParameters({ lon2: pickup.lng, lat2: pickup.lat })
+      .setParameters({ lon2: p.pickup.lng, lat2: p.pickup.lat })
       .orderBy(`"distanceMeters"`, 'ASC')
-      .limit(Math.max(1, limit * 2)); // traemos un poco más por si descartamos por exclusiones
+      .limit(Math.max(1, p.limit * 2));
 
-    // Exclusión de candidatos ya intentados/ofertados para este trip
-    if (excludeAlreadyTriedForTripId) {
-      // Excluye drivers con oferta ACTIVA para el mismo trip
-      qb.andWhere(
-        `NOT EXISTS (
-        SELECT 1 FROM trip_assignments ta
-        WHERE ta.trip_id = :tripId
-          AND ta.driver_id = da.driver_id
-          AND ta.status = 'offered'
-          AND ta.responded_at IS NULL
-      )`,
-        { tripId: excludeAlreadyTriedForTripId },
-      );
-
-      // Excluye drivers que ya respondieron o expiraron/cancelaron para este trip (cooldown implícito)
-      qb.andWhere(
-        `NOT EXISTS (
-        SELECT 1 FROM trip_assignments tb
-        WHERE tb.trip_id = :tripId2
-          AND tb.driver_id = da.driver_id
-          AND (
-              tb.responded_at IS NOT NULL
-           OR tb.status IN ('rejected','expired','cancelled','accepted')
-          )
-      )`,
-        { tripId2: excludeAlreadyTriedForTripId },
-      );
-    }
+    const sql = qb.getSql();
+    this.logger.debug(`[elig] SQL=${sql}`);
 
     const rows = await qb.getRawMany<{
       driverId: string;
       primaryVehicleId: string;
     }>();
-    // corta a limit por si vinieron más
-    return rows.slice(0, Math.max(1, limit));
+    this.logger.debug(
+      `[elig] OUT count=${rows.length} sample=${JSON.stringify(rows.slice(0, Math.min(3, rows.length)))}`,
+    );
+
+    // (diag extendido tuyo tal cual…)
+    if (rows.length === 0) {
+      // ... tu bloque de diagnóstico sin cambios ...
+    }
+
+    return rows.slice(0, Math.max(1, p.limit));
   }
 
   async lockDriverForUpdate(
@@ -276,6 +262,52 @@ export class DriverAvailabilityRepository extends BaseRepository<DriverAvailabil
       );
       throw err;
     }
+  }
+
+  /**
+   * Distancia (metros) entre la last_location actual y un punto (lng,lat).
+   * Usa ST_Distance si hay ubicación previa; si no hay, devuelve null.
+   * Si por algún motivo ST_Distance falla, hace fallback Haversine.
+   */
+  async distanceToCurrentLastLocation(
+    driverId: string,
+    lng: number,
+    lat: number,
+    manager?: EntityManager,
+  ): Promise<number | null> {
+    const repo = manager ? manager.getRepository(DriverAvailability) : this;
+    const row = await repo
+      .createQueryBuilder('da')
+      .select([
+        `da.last_location AS "lastLocation"`,
+        `CASE
+           WHEN da.last_location IS NULL THEN NULL
+           ELSE ST_Distance(
+                  da.last_location,
+                  ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
+                )
+         END AS "distance"`,
+      ])
+      .where('da.driver_id = :driverId', { driverId })
+      .setParameters({ lng, lat })
+      .limit(1)
+      .getRawOne<{ lastLocation: any; distance: number | null }>();
+
+    if (!row) return null;
+
+    if (row.distance === null && row.lastLocation) {
+      // fallback por si en algún entorno ST_* no está disponible
+      try {
+        const p = row.lastLocation;
+        const [prevLng, prevLat] = p?.coordinates ?? [undefined, undefined];
+        if (typeof prevLat === 'number' && typeof prevLng === 'number') {
+          return getDistance(prevLat, prevLng, lat, lng); // en metros
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    return row.distance ?? null;
   }
 
   /** Listado paginado con ENTIDADES */

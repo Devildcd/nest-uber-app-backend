@@ -23,3 +23,7 @@ export function fromGeoPoint(
   if (typeof lat !== 'number' || typeof lng !== 'number') return null;
   return { lat, lng };
 }
+
+export function geoWgs84Expr() {
+  return () => `ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography`;
+}

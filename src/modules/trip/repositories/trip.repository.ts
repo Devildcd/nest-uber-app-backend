@@ -312,7 +312,7 @@ export class TripRepository extends BaseRepository<Trip> {
   /** Transición: pending -> assigning (con lock previo en Service) */
   async moveToAssigningWithLock(
     id: string,
-    assigningStartedAt: Date,
+    // assigningStartedAt: Date,
     manager: EntityManager,
   ): Promise<void> {
     const repo = this.scoped(manager);
@@ -323,7 +323,7 @@ export class TripRepository extends BaseRepository<Trip> {
         .update()
         .set({
           currentStatus: TripStatus.ASSIGNING,
-          assigningStartedAt,
+          // assigningStartedAt,
         } as any)
         .where('id = :id', { id })
         .andWhere('current_status = :st', { st: TripStatus.PENDING })
@@ -344,48 +344,166 @@ export class TripRepository extends BaseRepository<Trip> {
     payload: { driverId: string; vehicleId: string; acceptedAt: Date },
     manager: EntityManager,
   ): Promise<void> {
-    const repo = this.scoped(manager);
     try {
-      await repo
-        .createQueryBuilder()
-        .update()
-        .set({
-          driverId: payload.driverId,
-          vehicleId: payload.vehicleId,
-          acceptedAt: payload.acceptedAt,
-          currentStatus: TripStatus.ACCEPTED,
-        } as any)
-        .where('id = :id', { id })
-        .andWhere('current_status = :st', { st: TripStatus.ASSIGNING })
-        .execute();
+      // OJO: en la DB la PK se llama "_id" (según tu @PrimaryGeneratedColumn)
+      await manager.query(
+        `UPDATE trips
+         SET driver_id = $2,
+             vehicle_id = $3,
+             accepted_at = $4,
+             current_status = $5,
+             updated_at = NOW()
+       WHERE _id = $1
+         AND current_status = $6`,
+        [
+          id,
+          payload.driverId,
+          payload.vehicleId,
+          payload.acceptedAt,
+          TripStatus.ACCEPTED,
+          TripStatus.ASSIGNING,
+        ],
+      );
     } catch (err) {
-      handleRepositoryError(this.logger, err, 'assignDriver', this.entityName);
+      handleRepositoryError(this.logger, err, 'assignDriver', 'Trip');
     }
   }
 
   async setArriving(
     id: string,
     at: Date,
+    etaOrManager: number | null | EntityManager | undefined,
+    maybeManager?: EntityManager,
+  ): Promise<void> {
+    // Detectar si el tercer parámetro es eta o manager
+    const hasEta = typeof etaOrManager === 'number' || etaOrManager === null;
+
+    const etaMinutes = hasEta ? etaOrManager : null;
+    const manager = hasEta
+      ? (maybeManager as EntityManager)
+      : (etaOrManager as EntityManager);
+
+    const repo = this.scoped(manager);
+
+    try {
+      const patch: any = {
+        arrivedPickupAt: at,
+        currentStatus: TripStatus.ARRIVING,
+      };
+
+      // Si tenemos ETA, calculamos pickup_eta_at
+      if (etaMinutes != null) {
+        const etaMs = at.getTime() + etaMinutes * 60 * 1000;
+        const etaDate = new Date(etaMs);
+        patch.pickupEtaAt = etaDate;
+      }
+
+      const result = await repo
+        .createQueryBuilder()
+        .update()
+        .set(patch)
+        .where('id = :id', { id })
+        .andWhere('current_status = :st', { st: TripStatus.ACCEPTED })
+        .execute();
+
+      const affected = result.affected ?? 0;
+      if (affected === 0) {
+        this.logger.warn(
+          `[TripRepository] setArriving no modificó filas trip=${id} (posible status != ${TripStatus.ACCEPTED})`,
+        );
+      } else {
+        this.logger.debug(
+          `[TripRepository] setArriving OK trip=${id} affected=${affected} at=${at.toISOString()} etaMinutes=${etaMinutes ?? 'null'}`,
+        );
+      }
+    } catch (err) {
+      handleRepositoryError(this.logger, err, 'setArriving', this.entityName);
+    }
+  }
+
+  async getStatusAndDriverForUpdate(
+    id: string,
+    manager: EntityManager,
+  ): Promise<{ status: TripStatus; driverId: string | null } | null> {
+    try {
+      const rows = await manager.query(
+        `
+      SELECT current_status, driver_id
+      FROM trips
+      WHERE _id = $1
+      FOR UPDATE
+      `,
+        [id],
+      );
+
+      if (!rows.length) {
+        this.logger.warn(
+          `[TripRepository] getStatusAndDriverForUpdate no rows id=${id}`,
+        );
+        return null;
+      }
+
+      const row = rows[0];
+      const status = row.current_status as TripStatus;
+      const driverId = (row.driver_id ?? null) as string | null;
+
+      this.logger.debug(
+        `[TripRepository] getStatusAndDriverForUpdate id=${id} status=${status} driverId=${driverId}`,
+      );
+
+      return { status, driverId };
+    } catch (err) {
+      handleRepositoryError(
+        this.logger,
+        err,
+        'getStatusAndDriverForUpdate',
+        this.entityName,
+      );
+      throw err;
+    }
+  }
+
+  async setArrivedPickup(
+    id: string,
+    at: Date,
     manager: EntityManager,
   ): Promise<void> {
     const repo = this.scoped(manager);
     try {
-      await repo
+      const result = await repo
         .createQueryBuilder()
         .update()
-        .set({ arrivedPickupAt: at, currentStatus: TripStatus.ARRIVING } as any)
+        .set({ arrivedPickupAt: at } as any)
         .where('id = :id', { id })
-        .andWhere('current_status = :st', { st: TripStatus.ACCEPTED })
+        .andWhere('current_status IN (:...st)', {
+          st: [TripStatus.ACCEPTED, TripStatus.ARRIVING],
+        })
         .execute();
+
+      const affected = result.affected ?? 0;
+      if (affected === 0) {
+        this.logger.warn(
+          `setArrivedPickup no modificó filas trip=${id} (status no es accepted/arriving?)`,
+        );
+      } else {
+        this.logger.debug(
+          `setArrivedPickup OK trip=${id} affected=${affected} at=${at.toISOString()}`,
+        );
+      }
     } catch (err) {
-      handleRepositoryError(this.logger, err, 'setArriving', this.entityName);
+      handleRepositoryError(
+        this.logger,
+        err,
+        'setArrivedPickup',
+        this.entityName,
+      );
     }
   }
 
   async startTrip(id: string, at: Date, manager: EntityManager): Promise<void> {
     const repo = this.scoped(manager);
     try {
-      await repo
+      const result = await repo
         .createQueryBuilder()
         .update()
         .set({ startedAt: at, currentStatus: TripStatus.IN_PROGRESS } as any)
@@ -394,8 +512,45 @@ export class TripRepository extends BaseRepository<Trip> {
           st: [TripStatus.ACCEPTED, TripStatus.ARRIVING],
         })
         .execute();
+
+      const affected = result.affected ?? 0;
+      if (affected === 0) {
+        this.logger.warn(
+          `startTrip no modificó filas trip=${id} (status no es accepted/arriving?)`,
+        );
+      } else {
+        this.logger.debug(
+          `startTrip OK trip=${id} affected=${affected} at=${at.toISOString()}`,
+        );
+      }
     } catch (err) {
       handleRepositoryError(this.logger, err, 'startTrip', this.entityName);
+      throw err; // 👈 importante para abortar la TX
+    }
+  }
+
+  async findByIdWithPricing(
+    id: string,
+    manager: EntityManager,
+  ): Promise<Trip | null> {
+    try {
+      return await manager.getRepository(Trip).findOne({
+        where: { id },
+        relations: {
+          passenger: true,
+          driver: true,
+          vehicle: true,
+          requestedServiceClass: true,
+          estimateVehicleType: { category: true },
+        },
+      });
+    } catch (err) {
+      handleRepositoryError(
+        this.logger,
+        err,
+        'findByIdWithPricing',
+        this.entityName,
+      );
     }
   }
 

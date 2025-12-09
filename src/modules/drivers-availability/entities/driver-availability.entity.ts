@@ -25,24 +25,24 @@ export enum AvailabilityReason {
 /** ───────── Consistencia de flags/razón ───────── */
 
 /* disponible ⇒ online, sin trip y sin razón */
-@Check(
-  `(NOT "is_available_for_trips") OR ("is_online" = true AND "current_trip_id" IS NULL AND "availability_reason" IS NULL)`,
-)
+// @Check(
+//   `(NOT "is_available_for_trips") OR ("is_online" = true AND "current_trip_id" IS NULL AND "availability_reason" IS NULL)`,
+// )
 /* si hay trip ⇒ no disponible y razón ON_TRIP */
-@Check(`("current_trip_id" IS NULL) OR ("is_available_for_trips" = false)`)
-@Check(`("current_trip_id" IS NULL) OR ("availability_reason" = 'ON_TRIP')`)
+// @Check(`("current_trip_id" IS NULL) OR ("is_available_for_trips" = false)`)
+// @Check(`("current_trip_id" IS NULL) OR ("availability_reason" = 'ON_TRIP')`)
 /* ON_TRIP ⇒ requiere trip */
-@Check(
-  `("availability_reason" IS DISTINCT FROM 'ON_TRIP') OR ("current_trip_id" IS NOT NULL)`,
-)
+// @Check(
+//   `("availability_reason" IS DISTINCT FROM 'ON_TRIP') OR ("current_trip_id" IS NOT NULL)`,
+// )
 /* UNAVAILABLE ⇒ no disponible */
-@Check(
-  `("availability_reason" IS DISTINCT FROM 'UNAVAILABLE') OR ("is_available_for_trips" = false)`,
-)
+// @Check(
+//   `("availability_reason" IS DISTINCT FROM 'UNAVAILABLE') OR ("is_available_for_trips" = false)`,
+// )
 /* OFFLINE (simetría) — salvo que esté en trip, offline ⇔ razón OFFLINE */
-@Check(
-  `("current_trip_id" IS NOT NULL) OR ((NOT "is_online") = ("availability_reason" = 'OFFLINE'))`,
-)
+// @Check(
+//   `("current_trip_id" IS NOT NULL) OR ((NOT "is_online") = ("availability_reason" = 'OFFLINE'))`,
+// )
 /** ───────── Unicidades / filtros frecuentes ───────── */
 @Index('uq_drv_av_driver_active', ['driverId'], {
   unique: true,

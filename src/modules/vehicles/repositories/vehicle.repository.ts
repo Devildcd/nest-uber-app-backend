@@ -4,6 +4,7 @@ import {
   DeepPartial,
   EntityManager,
   FindOneOptions,
+  IsNull,
   Repository,
   SelectQueryBuilder,
 } from 'typeorm';
@@ -51,6 +52,22 @@ export class VehicleRepository extends Repository<Vehicle> {
     } catch (err) {
       handleRepositoryError(this.logger, err, 'findById', this.entityName);
     }
+  }
+
+  async findPrimaryInServiceByDriver(
+    driverId: string,
+    manager?: EntityManager,
+  ) {
+    const repo = manager ? manager.getRepository(Vehicle) : this;
+    return repo.findOne({
+      where: {
+        driver: { id: driverId } as any,
+        status: VehicleStatus.IN_SERVICE,
+        deletedAt: IsNull(),
+      },
+      order: { updatedAt: 'DESC' as any },
+      relations: ['driver', 'driverProfile', 'vehicleType'],
+    });
   }
 
   /**

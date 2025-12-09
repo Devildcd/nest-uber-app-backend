@@ -9,6 +9,7 @@ import { AuthCredentials } from './entities/auth-credentials.entity';
 import { Session } from '../auth/entities/session.entity';
 import { AuthCredentialsRepository } from './repositories/auth-credentials.repository';
 import { DriverProfile } from '../driver-profiles/entities/driver-profile.entity';
+import { PassengerLocationService } from './services/passenger-location.service';
 
 @Module({
   imports: [
@@ -20,7 +21,12 @@ import { DriverProfile } from '../driver-profiles/entities/driver-profile.entity
       DriverProfile,
     ]),
   ],
-  providers: [UserService, UserRepository, AuthCredentialsRepository],
+  providers: [
+    UserService,
+    UserRepository,
+    AuthCredentialsRepository,
+    PassengerLocationService,
+  ],
   exports: [UserService, UserRepository],
   controllers: [UserController],
 })

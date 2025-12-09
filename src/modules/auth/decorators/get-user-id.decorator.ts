@@ -6,11 +6,13 @@ import {
 
 export const GetUserId = createParamDecorator(
   (_: unknown, ctx: ExecutionContext): string => {
-    const req = ctx.switchToHttp().getRequest<{ user?: { sub?: string } }>();
-    const sub = req.user?.sub;
-    if (!sub) {
+    const req = ctx
+      .switchToHttp()
+      .getRequest<{ user?: { id?: string; sub?: string } }>();
+    const userId = req.user?.id ?? req.user?.sub;
+    if (!userId) {
       throw new UnauthorizedException('There is no authenticated user');
     }
-    return sub;
+    return userId;
   },
 );

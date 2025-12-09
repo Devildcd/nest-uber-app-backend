@@ -1,6 +1,7 @@
 import {
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { Point } from 'geojson';
@@ -27,8 +28,13 @@ const r2 = (n: number) => Number(Number(n).toFixed(2));
 const r3 = (n: number) => Number(Number(n).toFixed(3));
 const r4 = (n: number) => Number(Number(n).toFixed(4));
 
+type TimerKey = string;
+
 @Injectable()
 export class TripHelpersService {
+  private readonly logger = new Logger(TripHelpersService.name);
+  private timers = new Map<TimerKey, NodeJS.Timeout>();
+
   constructor(
     private readonly dataSource: DataSource,
     private readonly tripRepo: TripRepository,
@@ -192,6 +198,10 @@ export class TripHelpersService {
     actualDistanceKm: number,
     actualDurationMin: number,
     extraFees: number | null | undefined,
+    opts?: {
+      waitingTimeMinutes?: number | null;
+      waitingReason?: string | null;
+    },
     manager?: EntityManager,
   ): Promise<{
     distanceKm: number;
@@ -240,31 +250,26 @@ export class TripHelpersService {
     const vtPerKm = Number(
       (trip as any).estimateVehicleType?.costPerKm ?? vt?.costPerKm ?? 0,
     );
-    // const vtPerMin = Number(                                        // ⛔ minuto
-    //   (trip as any).estimateVehicleType?.costPerMinute ?? vt?.costPerMinute ?? 0,
-    // );
     const vtMin = Number(
       (trip as any).estimateVehicleType?.minFare ?? vt?.minFare ?? 0,
     );
 
     const mulBase = Number(sc?.baseFareMultiplier ?? 1);
     const mulKm = Number(sc?.costPerKmMultiplier ?? 1);
-    // const mulMin = Number(sc?.costPerMinuteMultiplier ?? 1);         // ⛔ minuto
     const mulMF = Number(sc?.minFareMultiplier ?? 1);
 
     const base = vtBase * mulBase;
     const perKm = vtPerKm * mulKm;
-    // const perMin = vtPerMin * mulMin;                                // ⛔ minuto
     const minFare = vtMin * mulMF;
 
     const surge = Number(trip.fareSurgeMultiplier ?? 1.0);
     const extras = Number(extraFees ?? 0);
 
     const distanceKm = r3(Math.max(0, actualDistanceKm));
-    const durationMin = r2(Math.max(0, actualDurationMin)); // se reporta, pero NO suma
+    const durationMin = r2(Math.max(0, actualDurationMin)); // solo reporting
 
-    // const subtotal = base + perKm * distanceKm + perMin * durationMin + extras; // ⛔ antes
-    const subtotal = base + perKm * distanceKm + extras; // ✅ solo km
+    // 👇 extras suman solo en subtotal
+    const subtotal = base + perKm * distanceKm + extras;
     const totalBase = Math.max(subtotal, minFare);
     const fareTotal = r2(totalBase * surge);
 
@@ -285,19 +290,16 @@ export class TripHelpersService {
 
       base_fare: r2(base),
       cost_per_km: r4(perKm),
-      // cost_per_minute: r4(perMin), // ⛔ desactivado (minuto)
-      cost_per_minute: 0, // ✅ mostrado pero sin efecto
+      cost_per_minute: 0, // minuto neutralizado
       min_fare: r2(minFare),
 
       applied_multipliers: {
         base: mulBase,
         per_km: mulKm,
-        // per_min: mulMin, // ⛔ desactivado (minuto)
-        per_min: 1, // ✅ neutralizado
+        per_min: 1, // minuto neutralizado
         min_fare: mulMF,
       },
 
-      // Para trazabilidad seguimos exponiendo las “est” con los reales
       distance_km_est: distanceKm,
       duration_min_est: durationMin,
 
@@ -305,6 +307,27 @@ export class TripHelpersService {
       total: r2(totalBase),
       surge_multiplier: surge,
     };
+
+    // 👇 Enriquecemos con info de espera / penalización
+    if (opts?.waitingTimeMinutes != null) {
+      breakdown.waiting_time_minutes = r2(opts.waitingTimeMinutes);
+    }
+    if (opts?.waitingReason) {
+      breakdown.waiting_reason = opts.waitingReason;
+    }
+    if (extras > 0) {
+      breakdown.extra_fees_total = r2(extras);
+      breakdown.extra_lines = [
+        {
+          code: 'wait_penalty',
+          label: opts?.waitingReason ?? 'Recargo por espera',
+          amount: r2(extras),
+          meta: {
+            waiting_minutes: breakdown.waiting_time_minutes ?? null,
+          },
+        },
+      ];
+    }
 
     return {
       distanceKm,
@@ -344,20 +367,21 @@ export class TripHelpersService {
   }
 
   /**
-   * 2) CASCARÓN del algoritmo + 3) creación de oferta.
-   * - NO implementa el filtrado real. Solo muestra el flujo.
-   * - Usa tu tripRepo.buildPriorityQueueForTrip(...) para el orden.
-   * - Crea exactamente UNA oferta (la del mejor candidato).
+   * Matching simplificado:
+   * - Busca conductores elegibles en un radio (default 5km).
+   * - Si hay ofertas activas, no crea otra.
+   * - Elige **uno al azar** entre los elegibles y crea la oferta (con locks).
+   * - Emite DriverOffered al final.
    */
-  async runMatchingOnce(
-    tripId: string,
-    dto: StartAssigningDto,
-  ): Promise<{ assignmentId?: string; message: string }> {
-    const radius = dto.searchRadiusMeters ?? 3000;
-    const limit = dto.maxCandidates ?? 5;
+  async runMatchingOnce(tripId: string, dto: StartAssigningDto) {
+    const radius = dto.searchRadiusMeters ?? 5000;
+    const limit = dto.maxCandidates ?? 10;
     const ttlSec = dto.offerTtlSeconds ?? 20;
 
-    // 1) Trip y estado
+    this.logger.debug(
+      `matching: start trip=${tripId} r=${radius}m limit=${limit} ttl=${ttlSec}`,
+    );
+
     const trip = await this.tripRepo.findById(tripId, {
       relations: {
         requestedVehicleCategory: true,
@@ -366,57 +390,76 @@ export class TripHelpersService {
     });
     if (!trip) throw new NotFoundException('Trip not found');
     if (trip.currentStatus !== TripStatus.ASSIGNING) {
+      this.logger.warn(
+        `matching: trip not in ASSIGNING (current=${trip.currentStatus}) trip=${tripId}`,
+      );
       throw new ConflictException('Trip must be in "assigning" state');
     }
 
-    // (opcional) short-circuit: si ya hay una oferta activa, no generes otra
-    const existingOffers = await this.tripAssignmentsRepo.listOfferedByTrip(
-      trip.id,
-    );
-    if (existingOffers.length > 0) {
+    const existing = await this.tripAssignmentsRepo.listOfferedByTrip(trip.id);
+    if (existing.length > 0) {
+      this.logger.debug(
+        `matching: active offer exists trip=${tripId} assignment=${existing[0].id}`,
+      );
       return {
-        assignmentId: existingOffers[0].id,
+        assignmentId: existing[0].id,
         message: 'Active offer already exists',
       };
     }
 
-    // 2) Prefiltrado desde drivers_availability (LECTURA, sin lock)
     const pickup = this.extractPickupLatLng(trip);
-    const rawCandidates = await this.availabilityRepo.findEligibleDrivers({
-      pickup,
-      radiusMeters: radius,
-      vehicleCategoryId: trip.requestedVehicleCategory?.id ?? null,
-      serviceClassId: trip.requestedServiceClass?.id ?? null,
-      excludeAlreadyTriedForTripId: trip.id,
-      // puedes hacer overfetch dentro del repo; aquí pedimos exactamente 'limit'
-      limit,
-      requireWalletActive: true,
-      requireVehicleInService: true,
-      ttlSeconds: 90,
-    });
-
-    const prefiltered = rawCandidates.map((c) => ({
-      driverId: c.driverId,
-      vehicleId: c.primaryVehicleId,
-    }));
-
-    // 3) Ordenar por tu cola de prioridad
-    const ordered = await this.tripRepo.buildPriorityQueueForTrip(
-      trip.id,
-      pickup,
-      prefiltered,
+    this.logger.debug(
+      `matching: pickup extracted lat=${pickup.lat} lng=${pickup.lng} (should match request)`,
     );
-    if (!ordered.length) {
-      return { message: 'No candidates found for this round' };
+
+    let rawCandidates: Array<{ driverId: string; primaryVehicleId: string }> =
+      [];
+    try {
+      this.logger.debug(
+        `matching: eligibles params radius=${radius}m limit=${limit} cat=${trip.requestedVehicleCategory?.id ?? 'null'} svc=${trip.requestedServiceClass?.id ?? 'null'} ttl=${90}s wallet=${true} inService=${true}`,
+      );
+      rawCandidates = await this.availabilityRepo.findEligibleDrivers({
+        pickup,
+        radiusMeters: radius,
+        vehicleCategoryId: trip.requestedVehicleCategory?.id ?? null,
+        serviceClassId: trip.requestedServiceClass?.id ?? null,
+        excludeAlreadyTriedForTripId: trip.id,
+        limit,
+        requireWalletActive: true,
+        requireVehicleInService: true,
+        ttlSeconds: 90,
+      });
+    } catch (e: any) {
+      this.logger.error(
+        `matching: availability query failed trip=${tripId}: ${e?.message}`,
+      );
+      // Propaga para que el caller marque NDF si corresponde
+      throw e;
     }
 
-    // 4) Intentos con mini-TX y revalidación por candidato
-    for (const cand of ordered) {
+    this.logger.debug(
+      `matching: ${rawCandidates.length} candidates found trip=${tripId}`,
+    );
+
+    if (!rawCandidates.length) {
+      return { message: 'No candidates found within radius' };
+    }
+
+    // Random shuffle
+    const shuffled = [...rawCandidates];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    this.logger.debug(
+      `matching: shuffled order size=${shuffled.length} trip=${tripId}`,
+    );
+
+    for (const cand of shuffled) {
       try {
         const assignment = await withQueryRunnerTx(
           this.dataSource,
           async (_qr, manager) => {
-            // 4.1) Releer y lockear trip (por si cambió)
             const tLocked = await this.tripRepo.lockByIdForUpdate(
               trip.id,
               manager,
@@ -425,47 +468,39 @@ export class TripHelpersService {
             if (tLocked.currentStatus !== TripStatus.ASSIGNING) {
               throw new ConflictException('Trip left "assigning" state');
             }
-
-            // 4.2) Fallo rápido: asegurar unicidad de oferta activa de este trip
             await this.tripAssignmentsRepo.ensureNoActiveOfferForTrip(
               tLocked.id,
               manager,
             );
-
-            // 4.3) Lock del driver (estado canónico de disponibilidad)
             const dLocked = await this.availabilityRepo.lockDriverForUpdate(
               cand.driverId,
               manager,
             );
-            if (!dLocked) {
+            if (!dLocked)
               throw new ConflictException(
                 'Driver no longer available (missing row)',
               );
-            }
 
-            // 4.4) Re-validaciones críticas bajo lock
             this.matchingDomainGuards.ensureDriverEligibleForTrip({
               trip: tLocked,
               driverAvailability: dLocked,
-              vehicleId: cand.vehicleId,
+              vehicleId: cand.primaryVehicleId,
               pickup,
               radiusMeters: radius,
             });
 
-            // 4.5) Crear oferta (now/ttl dentro de la TX)
             const now = new Date();
             const ttl = new Date(now.getTime() + ttlSec * 1000);
 
             const a = await this.tripAssignmentsRepo.createOffered(
               tLocked.id,
               cand.driverId,
-              cand.vehicleId,
+              cand.primaryVehicleId,
               ttl,
               manager,
               { radius_m: radius },
             );
 
-            // 4.6) Evento
             await this.tripEventsRepo.append(
               tLocked.id,
               TripEventType.DRIVER_OFFERED as any,
@@ -473,7 +508,7 @@ export class TripHelpersService {
               {
                 assignment_id: a.id,
                 driver_id: cand.driverId,
-                vehicle_id: cand.vehicleId,
+                vehicle_id: cand.primaryVehicleId,
                 ttl_expires_at: ttl.toISOString(),
               },
               manager,
@@ -484,42 +519,48 @@ export class TripHelpersService {
           { logLabel: 'trip.match.offer' },
         );
 
+        this.logger.log(
+          `matching: offer created trip=${trip.id} assignment=${assignment.id} driver=${cand.driverId}`,
+        );
+
         this.events.emit(TripDomainEvents.DriverOffered, {
           at: new Date().toISOString(),
           tripId: trip.id,
           assignmentId: assignment.id,
-          driverId: assignment.driver.id ?? cand.driverId, // por si necesitas fallback
-          vehicleId: assignment.vehicle.id ?? cand.vehicleId, // idem
+          driverId: assignment.driver.id ?? cand.driverId,
+          vehicleId: assignment.vehicle.id ?? cand.primaryVehicleId,
           ttlExpiresAt: assignment.ttlExpiresAt!.toISOString(),
         } as DriverOfferedEvent);
 
-        // Éxito en el primer candidato que pasa
-        // TODO: notificar via WS al driver con countdown (ttlSec)
         return { assignmentId: assignment.id, message: 'Offer created' };
       } catch (err: any) {
-        // Si chocamos con el índice único (carrera), o falla la revalidación, probamos con el siguiente
-        // PG unique_violation
+        this.logger.warn(
+          `matching: candidate failed driver=${cand.driverId} reason=${err?.message ?? err}`,
+        );
         if (
           err?.code === '23505' ||
           String(err?.message).includes('ACTIVE_OFFER_ALREADY_EXISTS_FOR_TRIP')
         ) {
-          // alguien creó la oferta en paralelo; devolvemos estado consistente
           const active = await this.tripAssignmentsRepo.listOfferedByTrip(
             trip.id,
           );
           if (active.length) {
+            this.logger.debug(
+              `matching: race detected, returning existing assignment=${active[0].id}`,
+            );
             return {
               assignmentId: active[0].id,
               message: 'Active offer already exists',
             };
           }
         }
-        // continuar con el siguiente candidato
         continue;
       }
     }
 
-    // Si ninguno pasó la revalidación
+    this.logger.debug(
+      `matching: no candidates passed revalidation trip=${tripId}`,
+    );
     return { message: 'No candidates passed revalidation' };
   }
 

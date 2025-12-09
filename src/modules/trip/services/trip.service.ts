@@ -2,11 +2,12 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { TripsQueryDto } from '../dtos/trip/trips-query.dto';
 import { ApiResponseDto } from 'src/common/dto/api-response.dto';
-import { TripResponseDto } from '../dtos/trip/trip-response.dto';
+import { TripResponseDto, TripStopDto } from '../dtos/trip/trip-response.dto';
 import { PaginationMetaDto } from 'src/common/dto/pagination-meta.dto';
 import { TripRepository } from '../repositories/trip.repository';
 import { paginated } from 'src/common/utils/response-helpers';
@@ -46,9 +47,13 @@ import { toTripSnapshot } from 'src/core/domain/utils/to-trip-snapshot';
 import { TripSnapshotRepository } from '../repositories/trip-snapshot.repository';
 import { OrdersService } from 'src/modules/orders/services/orders.service';
 import { DriverAvailabilityService } from 'src/modules/drivers-availability/services/driver-availability.service';
+import { DriverAvailabilityRepository } from 'src/modules/drivers-availability/repositories/driver-availability.repository';
+import { EstimateTripDto } from '../dtos/trip/estimate-trip.dto';
+import { TripQuoteDto } from '../dtos/trip/trip-quote.dto';
 
 @Injectable()
 export class TripService {
+  private readonly logger = new Logger(TripService.name);
   constructor(
     private readonly tripRepo: TripRepository,
     private readonly tripAssignmentRepo: TripAssignmentRepository,
@@ -61,6 +66,7 @@ export class TripService {
     private readonly tripSnapshotRepo: TripSnapshotRepository,
     private readonly orderService: OrdersService,
     private readonly availabilityService: DriverAvailabilityService,
+    private readonly availabilityRepository: DriverAvailabilityRepository,
   ) {}
   /**
    * Lista paginada de trips (con relaciones básicas), devolviendo envelope estándar.
@@ -79,7 +85,7 @@ export class TripService {
     );
 
     // 2) Mapeo a DTO de salida
-    const items = entities.map(toTripResponseDto);
+    const items = entities.map((t) => toTripResponseDto(t));
 
     // 3) Envelope estandarizado con meta (page/limit/hasNext/hasPrev/nextPage/prevPage)
     return paginated(items, total, page, limit, 'Trips retrieved');
@@ -94,6 +100,7 @@ export class TripService {
         vehicle: true,
         requestedVehicleCategory: true,
         requestedServiceClass: true,
+        stops: true,
       },
     });
     if (!trip) throw new NotFoundException('Trip not found');
@@ -259,7 +266,7 @@ export class TripService {
               surgeMultiplier: est.surgeMultiplier,
               breakdown: est.breakdown,
               distanceKmEst: est.breakdown.distance_km_est,
-              // durationMinEst: est.breakdown.duration_min_est,
+              durationMinEst: est.breakdown.duration_min_est,
               estimatedTotal: est.totalEstimated,
             },
             manager,
@@ -302,6 +309,7 @@ export class TripService {
           vehicle: true,
           requestedVehicleCategory: true,
           requestedServiceClass: true,
+          stops: true,
         },
       });
       // (Opcional) si necesitas validar que hay stops creados:
@@ -345,39 +353,48 @@ export class TripService {
     }
   }
 
+  // Calcula el estimado del viaje para el front
+  async estimateTrip(dto: EstimateTripDto): Promise<TripQuoteDto> {
+    const est = await this.tripHelpers.estimateForRequest({
+      vehicleCategoryId: dto.vehicleCategoryId,
+      serviceClassId: dto.serviceClassId,
+      pickup: toGeoPoint(dto.pickup.lat, dto.pickup.lng),
+      stops: (dto.stops ?? []).map((s) => toGeoPoint(s.lat, s.lng)),
+      currency: dto.currency ?? 'CUP',
+      // fuera de TX: tu helper acepta manager opcional
+      manager: undefined,
+    });
+
+    return {
+      currency: est.currency,
+      surgeMultiplier: est.surgeMultiplier,
+      totalEstimated: est.totalEstimated,
+      breakdown: est.breakdown,
+    };
+  }
+
   /**
-   * Fase 2 (inicio): pasa el trip de PENDING -> ASSIGNING con TX corta.
-   * - Lock FOR UPDATE
-   * - Validar status
-   * - Persistir nuevo status
-   * - trip_events.append(assigning_started)
-   * - Emitir domain-event
-   * - Devolver TripResponseDto (para front o logs)
+   * Fase 2 (inicio): pasa el trip de PENDING -> ASSIGNING con TX corta
+   * y lanza inmediatamente el primer matching. Si no hay candidatos,
+   * el trip se cierra como no_drivers_found.
    */
-  async startAssigning(
-    tripId: string,
-    _dto: StartAssigningDto,
-  ): Promise<ApiResponseDto<TripResponseDto>> {
+  async startAssigning(tripId: string, _dto: StartAssigningDto) {
     const now = new Date();
+    this.logger?.debug?.(`assign.start: trip=${tripId}`);
 
     const updated = await withQueryRunnerTx(
       this.dataSource,
       async (_qr, manager) => {
-        // 1) Lock
         const t = await this.tripRepo.lockByIdForUpdate(tripId, manager);
         if (!t) throw new NotFoundException('Trip not found');
-
-        // 2) Precondición
         if (t.currentStatus !== TripStatus.PENDING) {
           throw new ConflictException(
             `Trip must be 'pending' to start assigning`,
           );
         }
 
-        // 3) PENDING -> ASSIGNING (TX corta)
-        await this.tripRepo.moveToAssigningWithLock(tripId, now, manager);
+        await this.tripRepo.moveToAssigningWithLock(tripId, manager); // << volver a pasar 'now'
 
-        // 4) Evento
         await this.tripEventsRepo.append(
           tripId,
           TripEventType.ASSIGNING_STARTED,
@@ -396,7 +413,6 @@ export class TripService {
           manager,
         );
 
-        // 5) Releer para responder
         const full = await this.tripRepo.findById(tripId, {
           relations: {
             passenger: true,
@@ -417,46 +433,125 @@ export class TripService {
       { logLabel: 'trip.assign.start' },
     );
 
+    // Intento inicial de matching con manejo de errores
+    let firstOffer;
+    try {
+      firstOffer = await this.tripHelpers.runMatchingOnce(tripId, {
+        searchRadiusMeters: 5000,
+        maxCandidates: 10,
+        offerTtlSeconds: 20,
+      });
+      this.logger?.debug?.(
+        `assign.start: firstOffer=${firstOffer.assignmentId ?? 'none'} msg=${firstOffer.message}`,
+      );
+    } catch (e: any) {
+      this.logger?.error?.(
+        `assign.start: matching error trip=${tripId}: ${e?.message}`,
+      );
+      firstOffer = { assignmentId: undefined, message: 'matching_error' };
+    }
+
+    if (!firstOffer.assignmentId) {
+      const at = new Date();
+      await withQueryRunnerTx(
+        this.dataSource,
+        async (_qr, manager) => {
+          const t = await this.tripRepo.lockByIdForUpdate(tripId, manager);
+          if (!t) throw new NotFoundException('Trip not found');
+          if (
+            [TripStatus.ASSIGNING, TripStatus.PENDING].includes(t.currentStatus)
+          ) {
+            await this.tripRepo.moveToNoDriversFoundWithLock(
+              tripId,
+              at,
+              manager,
+            );
+            await this.tripEventsRepo.append(
+              tripId,
+              TripEventType.NO_DRIVERS_FOUND,
+              at,
+              { reason: firstOffer.message || 'no_candidates_initial_round' },
+              manager,
+            );
+            await this.tripAssignmentRepo.cancelAllActiveOffers(
+              tripId,
+              manager,
+            );
+          }
+        },
+        { logLabel: 'trip.no_drivers_found.initial' },
+      );
+
+      this.events.emit(TripDomainEvents.NoDriversFound, {
+        at: at.toISOString(),
+        tripId,
+        reason: firstOffer.message || 'no_candidates_initial_round',
+      } as NoDriversFoundEvent);
+
+      const fullAfter = await this.tripRepo.findById(tripId, {
+        relations: {
+          passenger: true,
+          driver: true,
+          vehicle: true,
+          requestedVehicleCategory: true,
+          requestedServiceClass: true,
+        },
+      });
+
+      return {
+        success: true,
+        message:
+          'No drivers found on initial matching; trip marked as no_drivers_found',
+        data: toTripResponseDto(fullAfter!),
+      };
+    }
+
     return {
       success: true,
-      message: 'Trip moved to assigning',
+      message: 'Trip moved to assigning (first offer created)',
       data: toTripResponseDto(updated),
     };
   }
 
   async acceptAssignment(
     assignmentId: string,
+    authDriverId: string,
   ): Promise<ApiResponseDto<TripResponseDto>> {
     const now = new Date();
+    let result: { tripId: string; driverId: string; vehicleId: string };
 
-    const tripId = await withQueryRunnerTx(
+    result = await withQueryRunnerTx(
       this.dataSource,
       async (_qr, manager) => {
-        // 1) Aceptar con locks
-        const accepted = await this.tripAssignmentRepo.acceptOfferWithLocks(
-          assignmentId,
-          now,
-          manager,
-        );
+        const accepted =
+          await this.tripAssignmentRepo.acceptOfferWithLocksForDriver(
+            assignmentId,
+            authDriverId,
+            now,
+            manager,
+          );
         if (!accepted) throw new NotFoundException('Assignment not found');
 
         const { tripId, driverId, vehicleId } = accepted;
 
-        // 2) Fijar en TRIP
         await this.tripRepo.assignDriver(
           tripId,
           { driverId, vehicleId, acceptedAt: now },
           manager,
         );
 
-        // 3) Cancelar otras ofertas activas
+        await this.availabilityRepository.setCurrentTripByDriverId(
+          driverId,
+          tripId,
+          manager,
+        );
+
         await this.tripAssignmentRepo.cancelOtherOffers(
           tripId,
           assignmentId,
           manager,
         );
 
-        // 4) Eventos
         await this.tripEventsRepo.append(
           tripId,
           TripEventType.DRIVER_ACCEPTED,
@@ -476,28 +571,38 @@ export class TripService {
           manager,
         );
 
-        this.events.emit(TripDomainEvents.DriverAccepted, {
-          at: now.toISOString(),
-          tripId,
-          assignmentId,
-          driverId,
-          vehicleId,
-        } as DriverAcceptedEvent);
-
-        this.events.emit(TripDomainEvents.DriverAssigned, {
-          at: now.toISOString(),
-          tripId,
-          driverId,
-          vehicleId,
-        } as DriverAssignedEvent);
-
-        return tripId;
+        return { tripId, driverId, vehicleId };
       },
       { logLabel: 'trip.assignment.accept' },
     );
 
-    // Devolver el trip actualizado
-    const full = await this.tripRepo.findById(tripId, {
+    this.logger.log(
+      `[TripService] acceptAssignment committed trip=${result.tripId} driver=${result.driverId} vehicle=${result.vehicleId}`,
+    );
+
+    // 🔔 AHORA (ya con TX commit) emitimos eventos
+    this.events.emit(TripDomainEvents.DriverAccepted, {
+      at: now.toISOString(),
+      tripId: result.tripId,
+      assignmentId,
+      driverId: result.driverId,
+      vehicleId: result.vehicleId,
+    } as DriverAcceptedEvent);
+    this.logger.log(
+      `[TripService] DriverAccepted emitido trip=${result.tripId} driver=${result.driverId}`,
+    );
+
+    this.events.emit(TripDomainEvents.DriverAssigned, {
+      at: now.toISOString(),
+      tripId: result.tripId,
+      driverId: result.driverId,
+      vehicleId: result.vehicleId,
+    } as DriverAssignedEvent);
+    this.logger.log(
+      `[TripService] DriverAssigned emitido trip=${result.tripId} driver=${result.driverId}`,
+    );
+
+    const full = await this.tripRepo.findById(result.tripId, {
       relations: {
         passenger: true,
         driver: true,
@@ -506,6 +611,10 @@ export class TripService {
         requestedServiceClass: true,
       },
     });
+
+    this.logger.debug(
+      `[TripService] acceptAssignment respuesta trip=${result.tripId} status=${full?.currentStatus}`,
+    );
 
     return {
       success: true,
@@ -639,7 +748,7 @@ export class TripService {
 
     // B) Reintentar matching (una sola oferta nueva como en tu cascarón)
     const next = await this.tripHelpers.runMatchingOnce(tripId, {
-      searchRadiusMeters: 3000,
+      searchRadiusMeters: 5000,
       maxCandidates: 5,
       offerTtlSeconds: 20,
     });
@@ -772,38 +881,64 @@ export class TripService {
   ): Promise<ApiResponseDto<TripResponseDto>> {
     const now = new Date();
 
+    this.logger.debug(
+      `[TripService] startArriving called trip=${tripId} driver=${dto.driverId} eta=${dto.etaMinutes ?? 'null'}`,
+    );
+
     await withQueryRunnerTx(
       this.dataSource,
       async (_qr, manager) => {
-        // 1) Lock y validaciones de estado/driver
-        const t = await this.tripRepo.lockByIdForUpdate(tripId, manager);
-        if (!t) throw new NotFoundException('Trip not found');
+        // 1) Leer estado + driver con FOR UPDATE
+        const row = await this.tripRepo.getStatusAndDriverForUpdate(
+          tripId,
+          manager,
+        );
+        if (!row) throw new NotFoundException('Trip not found');
 
-        if (t.currentStatus !== TripStatus.ACCEPTED) {
+        const { status, driverId: driverDb } = row;
+
+        this.logger.debug(
+          `[TripService] startArriving lock trip=${tripId} status=${status} driverDb=${driverDb} driverDto=${dto.driverId}`,
+        );
+
+        // 2) Validaciones de estado
+        if (status !== TripStatus.ACCEPTED) {
           throw new ConflictException(
-            `Trip must be 'accepted' to move to 'arriving'`,
+            `Trip must be 'accepted' to move to 'arriving' (current=${status})`,
           );
         }
 
-        const driverId = t.driver?.id ?? (t as any).driverId;
-        if (!driverId)
+        if (!driverDb) {
+          this.logger.error(
+            `[TripService] startArriving trip=${tripId} has no driver fixed yet (driverDb is null)`,
+          );
           throw new BadRequestException('Trip has no driver fixed yet');
-        if (driverId !== dto.driverId) {
+        }
+
+        if (driverDb !== dto.driverId) {
+          this.logger.error(
+            `[TripService] startArriving trip=${tripId} driver mismatch db=${driverDb} dto=${dto.driverId}`,
+          );
           throw new ConflictException(
             'Caller driver does not match trip.driver_id',
           );
         }
 
-        // 2) Estado → ARRIVING (usa tu repo: arrivedPickupAt + status)
-        await this.tripRepo.setArriving(tripId, now, manager);
+        // 3) Estado → ARRIVING
+        await this.tripRepo.setArriving(
+          tripId,
+          now,
+          dto.etaMinutes ?? null,
+          manager,
+        );
 
-        // 3) Evento “driver en camino” (o LOCATION_UPDATE si no agregas el enum)
+        // 4) Evento DRIVER_EN_ROUTE
         await this.tripEventsRepo.append(
           tripId,
-          TripEventType.DRIVER_EN_ROUTE, // o TripEventType.LOCATION_UPDATE
+          TripEventType.DRIVER_EN_ROUTE,
           now,
           {
-            driver_id: driverId,
+            driver_id: driverDb,
             eta_min: dto.etaMinutes ?? null,
             driver_position:
               dto.driverLat != null && dto.driverLng != null
@@ -812,13 +947,11 @@ export class TripService {
           },
           manager,
         );
-
-        // TODO WS: notificar a pasajero con ETA y al driver (eco)
       },
       { logLabel: 'trip.arriving.start' },
     );
 
-    // Respuesta: trip actualizado
+    // 5) Trip actualizado para respuesta + eventos de dominio
     const full = await this.tripRepo.findById(tripId, {
       relations: {
         passenger: true,
@@ -861,30 +994,45 @@ export class TripService {
   ): Promise<ApiResponseDto<TripResponseDto>> {
     const now = new Date();
 
+    this.logger.debug(
+      `[TripService] markArrivedPickup called trip=${tripId} driver=${driverId}`,
+    );
+
     await withQueryRunnerTx(
       this.dataSource,
       async (_qr, manager) => {
-        // 1) Lock trip
-        const t = await this.tripRepo.findByIdForUpdate(tripId, manager);
-        if (!t) throw new NotFoundException('Trip not found');
+        // 1) Leer estado + driver con FOR UPDATE ligero
+        const row = await this.tripRepo.getStatusAndDriverForUpdate(
+          tripId,
+          manager,
+        );
+        if (!row) throw new NotFoundException('Trip not found');
 
-        // 2) Validaciones: estado y driver asignado
-        if (
-          ![TripStatus.ACCEPTED, TripStatus.ARRIVING].includes(t.currentStatus)
-        ) {
+        const { status, driverId: driverDb } = row;
+
+        this.logger.debug(
+          `[TripService] markArrivedPickup lock trip=${tripId} status=${status} driverDb=${driverDb} driverDto=${driverId}`,
+        );
+
+        // 2) Validaciones: estado correcto
+        if (![TripStatus.ACCEPTED, TripStatus.ARRIVING].includes(status)) {
           throw new ConflictException(
-            'Trip must be accepted/arriving to mark arrival',
+            `Trip must be accepted/arriving to mark arrival (current=${status})`,
           );
         }
-        const assignedDriverId = t.driver?.id ?? (t as any).driverId;
-        if (!assignedDriverId || assignedDriverId !== driverId) {
+
+        // 3) Validar driver asignado
+        if (!driverDb || driverDb !== driverId) {
+          this.logger.error(
+            `[TripService] markArrivedPickup driver mismatch trip=${tripId} db=${driverDb} dto=${driverId}`,
+          );
           throw new BadRequestException('Driver not assigned to this trip');
         }
 
-        // 3) Transición -> ARRIVING + arrived_pickup_at
-        await this.tripRepo.setArriving(tripId, now, manager);
+        // 4) Transición -> arrived_pickup_at + status ARRIVING
+        await this.tripRepo.setArrivedPickup(tripId, now, manager);
 
-        // 4) Evento
+        // 5) Evento de dominio en event-store
         await this.tripEventsRepo.append(
           tripId,
           TripEventType.DRIVER_ARRIVED_PICKUP,
@@ -892,13 +1040,11 @@ export class TripService {
           { driver_id: driverId },
           manager,
         );
-
-        // TODO: WS a pasajero/driver con ETA actualizado si lo tienes
       },
       { logLabel: 'trip.arrived_pickup' },
     );
 
-    // 5) Respuesta (trip fresco)
+    // 6) Trip fresco para la respuesta
     const full = await this.tripRepo.findById(tripId, {
       relations: {
         passenger: true,
@@ -909,6 +1055,7 @@ export class TripService {
       },
     });
 
+    // 7) Emitir evento de dominio para WS
     this.events.emit(TripDomainEvents.DriverArrivedPickup, {
       at: now.toISOString(),
       tripId,
@@ -934,27 +1081,31 @@ export class TripService {
     await withQueryRunnerTx(
       this.dataSource,
       async (_qr, manager) => {
-        // 1) Lock trip
-        const t = await this.tripRepo.findByIdForUpdate(tripId, manager);
-        if (!t) throw new NotFoundException('Trip not found');
+        // 1) Lock + lectura mínima (status + driverId)
+        const row = await this.tripRepo.getStatusAndDriverForUpdate(
+          tripId,
+          manager,
+        );
+        if (!row) throw new NotFoundException('Trip not found');
 
-        // 2) Validaciones
-        if (
-          ![TripStatus.ACCEPTED, TripStatus.ARRIVING].includes(t.currentStatus)
-        ) {
+        const { status, driverId: driverDb } = row;
+
+        // 2) Validaciones de estado
+        if (![TripStatus.ACCEPTED, TripStatus.ARRIVING].includes(status)) {
           throw new ConflictException(
-            'Trip must be accepted/arriving to start in-progress',
+            `Trip must be accepted/arriving to start in-progress (current=${status})`,
           );
         }
-        const assignedDriverId = t.driver?.id ?? (t as any).driverId;
-        if (!assignedDriverId || assignedDriverId !== driverId) {
+
+        // 3) Validación de driver asignado
+        if (!driverDb || driverDb !== driverId) {
           throw new BadRequestException('Driver not assigned to this trip');
         }
 
-        // 3) Transición -> IN_PROGRESS + started_at
+        // 4) Transición -> IN_PROGRESS + started_at
         await this.tripRepo.startTrip(tripId, now, manager);
 
-        // 4) Evento
+        // 5) Evento de dominio bajo la misma TX
         await this.tripEventsRepo.append(
           tripId,
           TripEventType.TRIP_STARTED,
@@ -963,14 +1114,12 @@ export class TripService {
           manager,
         );
 
-        // TODO: asegurar availability:
-        // await this.driverAvailabilityRepo.markOnTrip(driverId, tripId, manager);
-        // TODO: WS eco a driver + pasajero
+        // TODO: availability, etc.
       },
       { logLabel: 'trip.start' },
     );
 
-    // 5) Respuesta con trip fresco
+    // 6) Respuesta con trip fresco (ya fuera de la TX)
     const full = await this.tripRepo.findById(tripId, {
       relations: {
         passenger: true,
@@ -1001,29 +1150,41 @@ export class TripService {
       actualDistanceKm?: number | null;
       actualDurationMin?: number | null;
       extraFees?: number | null;
+      waitingTimeMinutes?: number | null;
+      waitingReason?: string | null;
     },
   ): Promise<ApiResponseDto<TripResponseDto>> {
     const now = new Date();
     let paymentMode!: PaymentMode;
     let driverIdFixed!: string;
+    let completedFareTotal!: number;
+    let completedCurrency!: string;
 
     await withQueryRunnerTx(
       this.dataSource,
       async (_qr, manager) => {
-        // 1) Lock + validaciones
-        const t = await this.tripRepo.findByIdForUpdate(tripId, manager);
-        if (!t) throw new NotFoundException('Trip not found');
-        if (t.currentStatus !== TripStatus.IN_PROGRESS) {
+        // 1) Lock minimalista: status + driver
+        const lock = await this.tripRepo.getStatusAndDriverForUpdate(
+          tripId,
+          manager,
+        );
+        if (!lock) throw new NotFoundException('Trip not found');
+
+        if (lock.status !== TripStatus.IN_PROGRESS) {
           throw new ConflictException(`Trip must be 'in_progress' to complete`);
         }
-        const assignedDriverId = t.driver?.id ?? (t as any).driverId;
-        if (!assignedDriverId || assignedDriverId !== dto.driverId) {
+        if (!lock.driverId || lock.driverId !== dto.driverId) {
           throw new BadRequestException('Driver not assigned / mismatched');
         }
 
-        // 2) Dist/tiempo: usar lo que venga, o fallback con Haversine (pickup+stops)
+        // 2) Trip completo para pricing, snapshot, availability
+        const t = await this.tripRepo.findByIdWithPricing(tripId, manager);
+        if (!t) throw new NotFoundException('Trip not found (after lock)');
+
+        // 3) Distancia/tiempo reales o fallback
         let dKm = dto.actualDistanceKm;
         let dMin = dto.actualDurationMin;
+
         if (dKm == null || dMin == null) {
           const stops = await this.tripStopsRepo.findByTripOrdered(
             tripId,
@@ -1035,19 +1196,27 @@ export class TripService {
           ];
           const distKm = this.tripHelpers['chainHaversineKm'](points as any);
           dKm = dKm ?? distKm;
-          dMin = dMin ?? (distKm / 30) * 60;
+          dMin = dMin ?? (distKm / 30) * 60; // heurística de duración
         }
 
-        // 3) Pricing final (servicio auxiliar)
+        // 4) Pricing final (incluye extras / espera)
         const final = await this.tripHelpers.computeFinalForCompletion(
           t,
           Number(dKm),
           Number(dMin),
           dto.extraFees ?? null,
+          {
+            waitingTimeMinutes: dto.waitingTimeMinutes ?? null,
+            waitingReason: dto.waitingReason ?? null,
+          },
           manager,
         );
 
-        // 4) Persistir cierre en trips
+        // Guardamos para el evento de dominio
+        completedFareTotal = final.fareTotal;
+        completedCurrency = final.currency;
+
+        // 5) Persistir cierre en trips
         await this.tripRepo.completeTrip(
           tripId,
           {
@@ -1061,7 +1230,7 @@ export class TripService {
           manager,
         );
 
-        // 5) Snapshot inmutable (best-effort)
+        // 6) Snapshot inmutable (best-effort)
         try {
           if (this.tripSnapshotRepo && t.driver && t.vehicle) {
             await this.tripSnapshotRepo.upsertForTrip(
@@ -1083,58 +1252,54 @@ export class TripService {
           }
         } catch {}
 
-        // 6) Liberar trip y re-evaluar disponibilidad (servicio availability)
+        // 7) Availability
         await this.availabilityService.onTripEnded(
-          assignedDriverId,
+          lock.driverId,
           t.vehicle?.id ?? null,
           manager,
         );
 
-        // 7) Event store
+        // 8) Event store
         await this.tripEventsRepo.append(
           tripId,
           TripEventType.TRIP_COMPLETED,
           now,
           {
-            driver_id: assignedDriverId,
+            driver_id: lock.driverId,
             fare_total: final.fareTotal,
             currency: final.currency,
+            waiting_time_minutes: dto.waitingTimeMinutes ?? null,
+            extra_fees: dto.extraFees ?? null,
+            waiting_reason: dto.waitingReason ?? null,
           },
           manager,
         );
 
-        driverIdFixed = assignedDriverId;
+        driverIdFixed = lock.driverId;
         paymentMode = t.paymentMode;
 
+        // 9) Orden CASH dentro de la TX (si aplica)
         if (paymentMode === PaymentMode.CASH) {
           await this.orderService.createCashOrderOnTripClosureTx(
             manager,
             tripId,
-            { currencyDefault: 'CUP' }, // opcional
+            { currencyDefault: final.currency },
           );
         }
       },
       { logLabel: 'trip.complete' },
     );
 
-    // 8) Domain event (sin WS)
+    // 10) Domain event → WS (incluyendo precio final)
     this.events.emit(TripDomainEvents.TripCompleted, {
       at: now.toISOString(),
       tripId,
       driverId: driverIdFixed,
+      fareTotal: completedFareTotal,
+      currency: completedCurrency,
     } as TripCompletedEvent);
 
-    // 9) Pago CASH luego del commit
-    // if (paymentMode === PaymentMode.CASH) {
-    //   const fresh = await this.tripRepo.findById(tripId);
-    //   await this.orderService.createCashOrderOnTripClosureTx(tripId, {
-    //     total: fresh?.fareTotal ?? 0,
-    //     currency: fresh?.fareFinalCurrency ?? 'USD',
-    //     breakdown: fresh?.fareBreakdown ?? null,
-    //   });
-    // }
-
-    // 10) Respuesta
+    // 11) Respuesta HTTP con trip fresco
     const full = await this.tripRepo.findById(tripId, {
       relations: {
         passenger: true,
@@ -1154,10 +1319,18 @@ export class TripService {
   }
 }
 
+const toLatLng = (geoPoint: any) => ({
+  lat: geoPoint?.coordinates?.[1],
+  lng: geoPoint?.coordinates?.[0],
+});
+
 const toISO = (d?: Date | null) =>
   d instanceof Date ? d.toISOString() : (d ?? null);
 
-function toTripResponseDto(t: Trip): TripResponseDto {
+function toTripResponseDto(
+  t: Trip,
+  stopsFromQuery?: TripStop[],
+): TripResponseDto {
   // pickupPoint en DB es GeoJSON: { type: 'Point', coordinates: [lng, lat] }
   const lat = Array.isArray((t as any).pickupPoint?.coordinates)
     ? (t as any).pickupPoint.coordinates[1]
@@ -1166,10 +1339,40 @@ function toTripResponseDto(t: Trip): TripResponseDto {
     ? (t as any).pickupPoint.coordinates[0]
     : undefined;
 
+  // preferimos los stops pasados (consulta explícita); si no, intentamos (t as any).stops
+  const rawStops: any[] = Array.isArray(stopsFromQuery)
+    ? stopsFromQuery
+    : Array.isArray((t as any).stops)
+      ? (t as any).stops
+      : [];
+
+  const stops: TripStopDto[] = rawStops
+    .map((s) => ({
+      seq: s.seq,
+      point: toLatLng(s.point),
+      address: s.address ?? null,
+      placeId: s.placeId ?? null,
+      notes: s.notes ?? null,
+      plannedArrivalAt: s.plannedArrivalAt
+        ? (s.plannedArrivalAt.toISOString?.() ?? s.plannedArrivalAt)
+        : null,
+      arrivedAt: s.arrivedAt
+        ? (s.arrivedAt.toISOString?.() ?? s.arrivedAt)
+        : null,
+      completedAt: s.completedAt
+        ? (s.completedAt.toISOString?.() ?? s.completedAt)
+        : null,
+    }))
+    .filter((s) => Number.isFinite(s.point.lat) && Number.isFinite(s.point.lng))
+    .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+
   return {
     id: t.id,
 
     passengerId: t.passenger?.id ?? (t as any).passengerId,
+    passengerName: t.passenger?.name ?? (t as any).passengerName ?? null,
+    passengerPhone:
+      (t.passenger as any)?.phoneNumber ?? (t as any).passengerPhone ?? null,
     driverId: t.driver?.id ?? (t as any).driverId ?? null,
     vehicleId: t.vehicle?.id ?? (t as any).vehicleId ?? null,
     orderId: (t as any).order?.id ?? (t as any).orderId ?? null,
@@ -1186,6 +1389,8 @@ function toTripResponseDto(t: Trip): TripResponseDto {
       (t as any).requestedServiceClass?.id ??
       (t as any).requestedServiceClassId,
     requestedServiceClassName: (t as any).requestedServiceClass?.name ?? null,
+
+    stops,
 
     requestedAt: toISO(t.requestedAt)!,
     acceptedAt: toISO(t.acceptedAt),

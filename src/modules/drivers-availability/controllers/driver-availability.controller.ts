@@ -8,6 +8,7 @@ import {
   Patch,
   Post,
   Query,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBody,
@@ -27,6 +28,10 @@ import { UpsertDriverAvailabilityDto } from '../dtos/driver-availability-upsert.
 import { UpdateDriverStatusDto } from '../dtos/update-status.dto';
 import { UpdateDriverLocationDto } from '../dtos/update-location.dto';
 import { UpdateDriverTripDto } from '../dtos/update-trip.dto';
+import { Throttle } from '@nestjs/throttler';
+import { DriverAvailabilityPingDto } from '../dtos/driver-availability-ping.dto';
+import { GetUserId } from 'src/modules/auth/decorators/get-user-id.decorator';
+import { JwtAuthGuard } from 'src/modules/auth/guards/jwt-auth.guard';
 
 @ApiTags('driver-availability')
 @Controller('driver-availability')
@@ -78,6 +83,19 @@ export class DriverAvailabilityController {
     return this.driverAvailabilityService.findByDriver(driverId);
   }
 
+  // GET /driver-availability por user auth
+  @UseGuards(JwtAuthGuard)
+  @Get('driver-auth')
+  @ApiOkResponse({
+    description: 'Driver availability by driver',
+    type: ApiResponseDto,
+  })
+  async dirverAuth(
+    @GetUserId() driverId: string,
+  ): Promise<DriverAvailabilityResponseDto> {
+    return this.driverAvailabilityService.findByDriver(driverId);
+  }
+
   // GET /driver-availability/nearby?lat&lng&radiusMeters&limit  -> matching simple
   @Public()
   @Get('nearby')
@@ -119,13 +137,40 @@ export class DriverAvailabilityController {
     return this.driverAvailabilityService.upsert(dto);
   }
 
+  /**
+   * Ping REST “batch/compact”
+   * - Con lat/lng => movimiento (si cumple umbral) + heartbeat
+   * - Sin lat/lng => heartbeat
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post('ping-location')
+  @Throttle({ default: { ttl: 10_000, limit: 8 } }) // máx 8 pings / 10s por driver (anti-flood)
+  async ping(
+    @GetUserId() driverId: string,
+    @Body() dto: DriverAvailabilityPingDto,
+  ) {
+    return this.driverAvailabilityService.ingestLocationPing(driverId, dto);
+  }
+
   // PATCH /driver-availability/:driverId/status  -> online/available/reason
+  // Admin
   @Public()
   @Patch(':driverId/status')
   @ApiBody({ type: UpdateDriverStatusDto })
   @ApiOkResponse({ description: 'Update status', type: ApiResponseDto })
   async updateStatus(
     @Param('driverId') driverId: string,
+    @Body() dto: UpdateDriverStatusDto,
+  ): Promise<DriverAvailabilityResponseDto> {
+    return this.driverAvailabilityService.updateStatus(driverId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Patch('status-by-driver')
+  @ApiBody({ type: UpdateDriverStatusDto })
+  @ApiOkResponse({ description: 'Update status', type: ApiResponseDto })
+  async updateStatusByDriver(
+    @GetUserId() driverId: string,
     @Body() dto: UpdateDriverStatusDto,
   ): Promise<DriverAvailabilityResponseDto> {
     return this.driverAvailabilityService.updateStatus(driverId, dto);

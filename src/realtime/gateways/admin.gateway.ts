@@ -10,6 +10,7 @@ import { TokenService } from 'src/modules/auth/services/token.service';
 import { SessionRepository } from 'src/modules/auth/repositories/session.repository';
 import { UserRepository } from 'src/modules/user/repositories/user.repository';
 import { UserStatus, UserType } from 'src/modules/user/entities/user.entity';
+import { WsServersRegistry } from '../ws-servers.registry';
 
 @WebSocketGateway({ namespace: '/admin', cors: true })
 export class AdminGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -21,7 +22,12 @@ export class AdminGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly tokenService: TokenService,
     private readonly sessionRepo: SessionRepository,
     private readonly usersRepo: UserRepository,
+    private readonly wsRegistry: WsServersRegistry,
   ) {}
+
+  afterInit(server: Server) {
+    this.wsRegistry.register('/admin', server);
+  }
 
   async handleConnection(client: Socket) {
     try {
