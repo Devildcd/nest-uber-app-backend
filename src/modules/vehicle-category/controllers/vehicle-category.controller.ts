@@ -34,6 +34,7 @@ import { VehicleCategoriesListResponseDto } from '../dto/vehicle-categories-list
 import { Public } from 'src/modules/auth/decorators/public.decorator';
 import { UpdateVehicleCategoryDto } from '../dto/update-vehicle-category.dto';
 import { VehicleCategoryResponseWrapperDto } from '../dto/vehicle-category-wrapper.dto';
+import { VehicleCategoryListQueryDto } from '../dto/vehicle-category-list-query.dto';
 
 @ApiTags('vehicle-category')
 @Controller('vehicle-categories')
@@ -78,17 +79,29 @@ export class VehicleCategoryController {
   @ApiUnauthorizedResponse({ description: 'Authentication required' })
   @ApiForbiddenResponse({ description: 'Admins only' })
   async findAll(
-    @Query() pagination: PaginationDto,
-    @Query() filters?: VehicleCategoryFiltersDto,
+    @Query() query: VehicleCategoryListQueryDto,
   ): Promise<VehicleCategoriesListResponseDto> {
+    const { page, limit, name, isActive } = query;
+
+    const pagination: PaginationDto = {
+      page,
+      limit,
+    };
+
+    const filters: VehicleCategoryFiltersDto = {
+      name,
+      isActive,
+    };
+
     this.logger.log(
-      `Fetching vehicle categories — page ${pagination.page}, limit ${pagination.limit}`,
+      `Fetching vehicle categories — page ${pagination.page}, limit ${pagination.limit}, name=${name}, isActive=${isActive}`,
     );
 
     const apiResp = await this.vehicleCategoryService.findAll(
       pagination,
       filters,
     );
+
     return plainToInstance(VehicleCategoriesListResponseDto, apiResp, {
       excludeExtraneousValues: true,
     });
