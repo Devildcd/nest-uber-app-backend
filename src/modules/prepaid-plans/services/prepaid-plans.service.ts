@@ -24,9 +24,15 @@ import { PurchasePrepaidPlanCashDto } from '../dto/purchase-prepaid-plan-cash.dt
 import { PurchasePrepaidPlanResponseDto } from '../dto/purchase-prepaid-plan-response.dto';
 import { User } from 'src/modules/user/entities/user.entity';
 import { CashCollectionPoint } from 'src/modules/cash_colletions_points/entities/cash_colletions_points.entity';
-import { TransactionStatus, TransactionType } from 'src/modules/transactions/entities/transaction.entity';
+import {
+  TransactionStatus,
+  TransactionType,
+} from 'src/modules/transactions/entities/transaction.entity';
 import { CashCollectionStatus } from 'src/modules/cash_colletions_points/entities/cash_colletion_records.entity';
-import { UserPrepaidPlan, UserPrepaidPlanStatus } from '../entities/user-prepaid-plans.entity';
+import {
+  UserPrepaidPlan,
+  UserPrepaidPlanStatus,
+} from '../entities/user-prepaid-plans.entity';
 import { DriverBalanceRepository } from 'src/modules/driver_balance/repositories/driver_balance.repository';
 import { WalletMovementsRepository } from 'src/modules/driver_balance/repositories/wallet-movements.repository';
 import { WalletMovement } from 'src/modules/driver_balance/entities/wallet-movement.entity';
@@ -73,9 +79,7 @@ export class PrepaidPlansService {
   }
 
   /** Detalle por id */
-  async findOne(
-    id: string,
-  ): Promise<ApiResponseDto<PrepaidPlanResponseDto>> {
+  async findOne(id: string): Promise<ApiResponseDto<PrepaidPlanResponseDto>> {
     const plan = await this.prepaidRepo.findById(id);
     if (!plan) throw new NotFoundException('Prepaid plan not found');
 
@@ -224,13 +228,18 @@ export class PrepaidPlansService {
     if (idemKey) {
       const prev = await this.txRepo.findPlanPurchaseByIdemKey(idemKey);
       if (prev) {
-        const existing = await this.userPlanRepo.findByInitialTransactionId(prev.id);
+        const existing = await this.userPlanRepo.findByInitialTransactionId(
+          prev.id,
+        );
         if (existing) {
-          const plan = await this.prepaidRepo.findById(existing.planId!);
+          const plan = await this.prepaidRepo.findById(existing.planId);
           const tripsIncluded = plan?.tripsIncluded ?? null;
           const liability =
             tripsIncluded && tripsIncluded > 0
-              ? (Number(plan!.price) * (Number(existing.tripsRemaining ?? 0) / tripsIncluded)).toFixed(2)
+              ? (
+                  Number(plan!.price) *
+                  (Number(existing.tripsRemaining ?? 0) / tripsIncluded)
+                ).toFixed(2)
               : null;
 
           return {
@@ -265,29 +274,50 @@ export class PrepaidPlansService {
         }
 
         // Validar existencias mínimas para FKs fuertes (opcional pero recomendado)
-        const buyer = await manager.getRepository(User).findOne({ where: { id: dto.buyerUserId } });
+        const buyer = await manager
+          .getRepository(User)
+          .findOne({ where: { id: dto.buyerUserId } });
         if (!buyer) throw new NotFoundException('Buyer user not found');
 
-        const collectionPoint = await manager.getRepository(CashCollectionPoint).findOne({ where: { id: dto.collectionPointId } });
-        if (!collectionPoint) throw new NotFoundException('Collection point not found');
+        const collectionPoint = await manager
+          .getRepository(CashCollectionPoint)
+          .findOne({ where: { id: dto.collectionPointId } });
+        if (!collectionPoint)
+          throw new NotFoundException('Collection point not found');
 
-        const collectedBy = await manager.getRepository(User).findOne({ where: { id: dto.collectedByUserId } });
-        if (!collectedBy) throw new NotFoundException('Collected-by staff user not found');
+        const collectedBy = await manager
+          .getRepository(User)
+          .findOne({ where: { id: dto.collectedByUserId } });
+        if (!collectedBy)
+          throw new NotFoundException('Collected-by staff user not found');
 
         // Idempotencia dentro de TX (si llega idemKey)
         if (idemKey) {
-          const already = await this.txRepo.findPlanPurchaseByIdemKey(idemKey, manager);
+          const already = await this.txRepo.findPlanPurchaseByIdemKey(
+            idemKey,
+            manager,
+          );
           if (already) {
-            const up = await this.userPlanRepo.findByInitialTransactionId(already.id, manager);
+            const up = await this.userPlanRepo.findByInitialTransactionId(
+              already.id,
+              manager,
+            );
             if (up) {
-              throw new ConflictException('Duplicate purchase (idempotency key already used)');
+              throw new ConflictException(
+                'Duplicate purchase (idempotency key already used)',
+              );
             }
           }
         }
 
         const purchaseDate = now;
         const expirationDate =
-          plan.expiresInDays != null ? new Date(purchaseDate.getTime() + plan.expiresInDays * 24 * 60 * 60 * 1000) : null;
+          plan.expiresInDays != null
+            ? new Date(
+                purchaseDate.getTime() +
+                  plan.expiresInDays * 24 * 60 * 60 * 1000,
+              )
+            : null;
         const tripsRemaining = plan.tripsIncluded ?? 0;
 
         // 1) Crear transacción contable (PROCESSED por efectivo)
@@ -296,7 +326,7 @@ export class PrepaidPlansService {
             type: TransactionType.PLAN_PURCHASE,
             status: TransactionStatus.PROCESSED,
             processedAt: now,
-            fromUser: { id: dto.buyerUserId } as any,     // quien paga
+            fromUser: { id: dto.buyerUserId } as any, // quien paga
             toUser: { id: dto.collectedByUserId } as any, // quien recibe en nombre de la plataforma
             grossAmount: Number(plan.price),
             platformFeeAmount: 0,
@@ -318,12 +348,12 @@ export class PrepaidPlansService {
         // 2) Registrar cash collection (depósito en punto de recaudo)
         await this.cashRecordRepo.createAndSave(
           {
-            driver: { id: dto.buyerUserId } as any,        // quién deposita (driver)
+            driver: { id: dto.buyerUserId } as any, // quién deposita (driver)
             collectionPoint: { id: dto.collectionPointId } as any,
-            collectedBy: { id: dto.collectedByUserId } as any,   // staff/operador
+            collectedBy: { id: dto.collectedByUserId } as any, // staff/operador
             amount: Number(plan.price),
             currency: plan.currency,
-            status:  CashCollectionStatus.COMPLETED,
+            status: CashCollectionStatus.COMPLETED,
             transaction: { id: tx.id } as any,
             notes: `Plan Purchase: ${dto.planId}`,
           },
@@ -346,13 +376,16 @@ export class PrepaidPlansService {
 
         const liability =
           plan.tripsIncluded && plan.tripsIncluded > 0
-            ? (Number(plan.price) * (Number(userPlan.tripsRemaining ?? 0) / plan.tripsIncluded)).toFixed(2)
+            ? (
+                Number(plan.price) *
+                (Number(userPlan.tripsRemaining ?? 0) / plan.tripsIncluded)
+              ).toFixed(2)
             : null;
 
         const response: PurchasePrepaidPlanResponseDto = {
           userPrepaidPlanId: userPlan.id,
           planId: plan.id,
-          buyerUserId: dto.buyerUserId,         
+          buyerUserId: dto.buyerUserId,
           price: plan.price,
           currency: plan.currency,
           tripsRemaining: userPlan.tripsRemaining ?? null,
@@ -391,13 +424,18 @@ export class PrepaidPlansService {
     if (idemKey) {
       const prev = await this.txRepo.findPlanPurchaseByIdemKey(idemKey);
       if (prev) {
-        const existing = await this.userPlanRepo.findByInitialTransactionId(prev.id);
+        const existing = await this.userPlanRepo.findByInitialTransactionId(
+          prev.id,
+        );
         if (existing) {
-          const plan = await this.prepaidRepo.findById(existing.planId!);
+          const plan = await this.prepaidRepo.findById(existing.planId);
           const tripsIncluded = plan?.tripsIncluded ?? null;
           const liability =
             tripsIncluded && tripsIncluded > 0
-              ? (Number(plan!.price) * (Number(existing.tripsRemaining ?? 0) / tripsIncluded)).toFixed(2)
+              ? (
+                  Number(plan!.price) *
+                  (Number(existing.tripsRemaining ?? 0) / tripsIncluded)
+                ).toFixed(2)
               : null;
 
           return {
@@ -433,22 +471,35 @@ export class PrepaidPlansService {
         }
 
         // 2) Buyer existente
-        const buyer = await manager.getRepository(User).findOne({ where: { id: dto.buyerUserId } });
+        const buyer = await manager
+          .getRepository(User)
+          .findOne({ where: { id: dto.buyerUserId } });
         if (!buyer) throw new NotFoundException('Buyer user not found');
 
         // 3) Idempotencia intra-TX por key (si viene)
         if (idemKey) {
-          const already = await this.txRepo.findPlanPurchaseByIdemKey(idemKey, manager);
+          const already = await this.txRepo.findPlanPurchaseByIdemKey(
+            idemKey,
+            manager,
+          );
           if (already) {
-            const up = await this.userPlanRepo.findByInitialTransactionId(already.id, manager);
-            if (up) throw new ConflictException('Duplicate purchase (idempotency key already used)');
+            const up = await this.userPlanRepo.findByInitialTransactionId(
+              already.id,
+              manager,
+            );
+            if (up)
+              throw new ConflictException(
+                'Duplicate purchase (idempotency key already used)',
+              );
           }
         }
 
         // 4) Wallet lock + checks
-        const wallet = await this.walletRepo.lockByDriverId(manager, dto.buyerUserId).catch(() => {
-          throw new NotFoundException('Driver wallet not found');
-        });
+        const wallet = await this.walletRepo
+          .lockByDriverId(manager, dto.buyerUserId)
+          .catch(() => {
+            throw new NotFoundException('Driver wallet not found');
+          });
 
         if (wallet.status === 'blocked') {
           throw new ConflictException('Wallet is blocked');
@@ -499,7 +550,10 @@ export class PrepaidPlansService {
         );
 
         // 7) Idempotencia de movimiento por transactionId
-        let movement = await this.walletMovRepo.findByTransactionId(tx.id, manager);
+        let movement = await this.walletMovRepo.findByTransactionId(
+          tx.id,
+          manager,
+        );
         if (!movement) {
           // 7.1) Crear movimiento NEGATIVO por el débito del plan
           movement = await this.walletMovRepo.createAndSave(manager, {
@@ -512,12 +566,19 @@ export class PrepaidPlansService {
           });
 
           // 7.2) Actualizar saldo wallet (una pasada)
-          await this.walletRepo.updateBalanceLocked(manager, wallet, newBalance);
+          await this.walletRepo.updateBalanceLocked(
+            manager,
+            wallet,
+            newBalance,
+          );
 
           // 7.3) (Opcional) bloquear si cruza a negativo por primera vez según política
           if (newBalance < 0 && previous >= 0) {
-            
-            await this.walletRepo.blockWalletLocked(manager, wallet, 'negative_balance_on_plan_purchase');
+            await this.walletRepo.blockWalletLocked(
+              manager,
+              wallet,
+              'negative_balance_on_plan_purchase',
+            );
           }
         }
 
@@ -525,7 +586,10 @@ export class PrepaidPlansService {
         const purchaseDate = now;
         const expirationDate =
           plan.expiresInDays != null
-            ? new Date(purchaseDate.getTime() + plan.expiresInDays * 24 * 60 * 60 * 1000)
+            ? new Date(
+                purchaseDate.getTime() +
+                  plan.expiresInDays * 24 * 60 * 60 * 1000,
+              )
             : null;
         const tripsRemaining = plan.tripsIncluded ?? null;
 
@@ -545,7 +609,10 @@ export class PrepaidPlansService {
         // 9) Liability derivada (solo si es pack de viajes)
         const liability =
           plan.tripsIncluded && plan.tripsIncluded > 0
-            ? (Number(plan.price) * (Number(userPlan.tripsRemaining ?? 0) / plan.tripsIncluded)).toFixed(2)
+            ? (
+                Number(plan.price) *
+                (Number(userPlan.tripsRemaining ?? 0) / plan.tripsIncluded)
+              ).toFixed(2)
             : null;
 
         const response: PurchasePrepaidPlanResponseDto = {
@@ -571,7 +638,7 @@ export class PrepaidPlansService {
       data: result,
     };
   }
-   /** Plan ACTIVO (mejor candidato) para un usuario. */
+  /** Plan ACTIVO (mejor candidato) para un usuario. */
   async getActiveForUser(
     userId: string,
   ): Promise<ApiResponseDto<UserActivePrepaidPlanResponseDto | null>> {
@@ -611,96 +678,100 @@ export class PrepaidPlansService {
    * - Si queda en 0 -> status=USED
    */
   /**
- * Decrementa en 1 los viajes del **plan ACTIVO** del usuario.
- * - Requiere: plan activo, no expirado.
- * - Si el plan es PACK (plan.tripsIncluded != null) => trips_remaining > 0 o lanza 409.
- * - Si es DESCUENTO PURO (no-pack) => no toca trips_remaining (se mantiene null).
- * - Acepta `manager` para ejecutarse dentro de una TX; si no se provee, abre una TX corta.
- */
-async consumeOneForUser(
-  userId: string,
-  manager?: EntityManager,
-): Promise<ConsumeOneResult> {
-  const run = async (em: EntityManager): Promise<ConsumeOneResult> => {
-    const usedAt = new Date();
+   * Decrementa en 1 los viajes del **plan ACTIVO** del usuario.
+   * - Requiere: plan activo, no expirado.
+   * - Si el plan es PACK (plan.tripsIncluded != null) => trips_remaining > 0 o lanza 409.
+   * - Si es DESCUENTO PURO (no-pack) => no toca trips_remaining (se mantiene null).
+   * - Acepta `manager` para ejecutarse dentro de una TX; si no se provee, abre una TX corta.
+   */
+  async consumeOneForUser(
+    userId: string,
+    manager?: EntityManager,
+  ): Promise<ConsumeOneResult> {
+    const run = async (em: EntityManager): Promise<ConsumeOneResult> => {
+      const usedAt = new Date();
 
-    // 1) Encontrar el plan ACTIVO del usuario (tu repo ya filtra por activo, no expirado y con trips>0 si es pack)
-    const active = await this.userPlanRepo.findActiveForUser(userId, em);
-    if (!active) {
-      throw new NotFoundException('User has no active prepaid plan');
-    }
-
-    // 2) Releer con LOCK FOR UPDATE (para evitar carreras) + join plan
-    const up = await em
-      .getRepository(UserPrepaidPlan)
-      .createQueryBuilder('up')
-      .setLock('pessimistic_write')
-      .leftJoinAndSelect('up.plan', 'p')
-      .where('up._id = :id', { id: active.id })
-      .getOne();
-
-    if (!up) {
-      throw new NotFoundException('User prepaid plan not found');
-    }
-
-    // 3) Guardarraíles adicionales
-    if (up.status !== UserPrepaidPlanStatus.ACTIVE) {
-      throw new ConflictException(`User plan is not active (status=${up.status})`);
-    }
-    if (up.expirationDate && up.expirationDate <= new Date()) {
-      throw new ConflictException('User plan is expired');
-    }
-
-    const isPack = up.plan?.tripsIncluded != null;
-    const current = up.tripsRemaining ?? null;
-
-    if (isPack) {
-      const hasTrips = (current ?? 0) > 0;
-      if (!hasTrips) {
-        throw new ConflictException('No trips remaining in pack');
+      // 1) Encontrar el plan ACTIVO del usuario (tu repo ya filtra por activo, no expirado y con trips>0 si es pack)
+      const active = await this.userPlanRepo.findActiveForUser(userId, em);
+      if (!active) {
+        throw new NotFoundException('User has no active prepaid plan');
       }
-    }
 
-     // 4) Calcular cambios
-    let nextTrips: number | null = current;
-    let nextStatus: UserPrepaidPlanStatus = up.status;
+      // 2) Releer con LOCK FOR UPDATE (para evitar carreras) + join plan
+      const up = await em
+        .getRepository(UserPrepaidPlan)
+        .createQueryBuilder('up')
+        .setLock('pessimistic_write')
+        .leftJoinAndSelect('up.plan', 'p')
+        .where('up._id = :id', { id: active.id })
+        .getOne();
 
-    if (isPack) {
-      nextTrips = Math.max(0, (current ?? 0) - 1);
-      nextStatus =
-        (nextTrips ?? 0) <= 0 ? UserPrepaidPlanStatus.USED : UserPrepaidPlanStatus.ACTIVE;
-    } else {
-      // descuento puro: no modificamos tripsRemaining (se mantiene null)
-      nextTrips = null;
-      nextStatus = UserPrepaidPlanStatus.ACTIVE;
-    }
+      if (!up) {
+        throw new NotFoundException('User prepaid plan not found');
+      }
 
-    // 5) Persistir
-    up.tripsRemaining = nextTrips;
-    up.lastUsedAt = usedAt;
-    up.status = nextStatus;
+      // 3) Guardarraíles adicionales
+      if (up.status !== UserPrepaidPlanStatus.ACTIVE) {
+        throw new ConflictException(
+          `User plan is not active (status=${up.status})`,
+        );
+      }
+      if (up.expirationDate && up.expirationDate <= new Date()) {
+        throw new ConflictException('User plan is expired');
+      }
 
-    await em.getRepository(UserPrepaidPlan).save(up);
+      const isPack = up.plan?.tripsIncluded != null;
+      const current = up.tripsRemaining ?? null;
 
-    // 6) Respuesta
-    return {
-      userPrepaidPlanId: up.id,
-      userId: up.userId,
-      planId: up.planId,
-      tripsRemaining: up.tripsRemaining ?? null,
-      status: up.status,
-      lastUsedAt: up.lastUsedAt ? up.lastUsedAt.toISOString() : null,
+      if (isPack) {
+        const hasTrips = (current ?? 0) > 0;
+        if (!hasTrips) {
+          throw new ConflictException('No trips remaining in pack');
+        }
+      }
+
+      // 4) Calcular cambios
+      let nextTrips: number | null = current;
+      let nextStatus: UserPrepaidPlanStatus = up.status;
+
+      if (isPack) {
+        nextTrips = Math.max(0, (current ?? 0) - 1);
+        nextStatus =
+          (nextTrips ?? 0) <= 0
+            ? UserPrepaidPlanStatus.USED
+            : UserPrepaidPlanStatus.ACTIVE;
+      } else {
+        // descuento puro: no modificamos tripsRemaining (se mantiene null)
+        nextTrips = null;
+        nextStatus = UserPrepaidPlanStatus.ACTIVE;
+      }
+
+      // 5) Persistir
+      up.tripsRemaining = nextTrips;
+      up.lastUsedAt = usedAt;
+      up.status = nextStatus;
+
+      await em.getRepository(UserPrepaidPlan).save(up);
+
+      // 6) Respuesta
+      return {
+        userPrepaidPlanId: up.id,
+        userId: up.userId,
+        planId: up.planId,
+        tripsRemaining: up.tripsRemaining ?? null,
+        status: up.status,
+        lastUsedAt: up.lastUsedAt ? up.lastUsedAt.toISOString() : null,
+      };
     };
-  };
 
-  if (manager) {
-    return run(manager);
+    if (manager) {
+      return run(manager);
+    }
+    return withQueryRunnerTx(this.dataSource, (_qr, em) => run(em), {
+      logLabel: 'user_prepaid_plans.consume_one_for_user',
+    });
   }
-  return withQueryRunnerTx(this.dataSource, (_qr, em) => run(em), {
-    logLabel: 'user_prepaid_plans.consume_one_for_user',
-  });
-}
-/**
+  /**
    * Ejecuta el job de expiración:
    * - Marca EXPIRED todos los user_prepaid_plans vencidos (ACTIVE y expiration_date <= now).
    * - Devuelve contadores útiles para logs/observabilidad.
@@ -708,13 +779,18 @@ async consumeOneForUser(
    * Sugerido para correrse a las 00:00 (timezone de tu instancia).
    * Si lo invocas con `manager`, reutiliza la TX; si no, abre una TX corta.
    */
-  async expireDueUserPlans(now = new Date(), manager?: EntityManager): Promise<{
+  async expireDueUserPlans(
+    now = new Date(),
+    manager?: EntityManager,
+  ): Promise<{
     runAt: string;
     expiredCount: number;
   }> {
     const run = async (em: EntityManager) => {
       const affected = await this.userPlanRepo.bulkExpireDue(now, em);
-      this.logger.log(`expireDueUserPlans: expired=${affected} at=${now.toISOString()}`);
+      this.logger.log(
+        `expireDueUserPlans: expired=${affected} at=${now.toISOString()}`,
+      );
       return {
         runAt: now.toISOString(),
         expiredCount: affected,
@@ -728,7 +804,6 @@ async consumeOneForUser(
     });
   }
 }
-
 
 /** Helpers */
 const toISO = (d?: Date | null) =>
@@ -751,39 +826,40 @@ function toPrepaidPlanResponseDto(p: PrepaidPlan): PrepaidPlanResponseDto {
     createdAt: toISO(p.createdAt)!,
     updatedAt: toISO(p.updatedAt)!,
   };
-  
 }
 
-function mapUserPlanToActiveDto(up: UserPrepaidPlan): UserActivePrepaidPlanResponseDto {
-    const plan = (up as any).plan as PrepaidPlan | undefined;
+function mapUserPlanToActiveDto(
+  up: UserPrepaidPlan,
+): UserActivePrepaidPlanResponseDto {
+  const plan = (up as any).plan as PrepaidPlan | undefined;
 
-    const priceNum = Number(plan?.price ?? 0);
-    const tripsIncluded = plan?.tripsIncluded ?? null;
-    const tripsRemaining = up.tripsRemaining ?? null;
+  const priceNum = Number(plan?.price ?? 0);
+  const tripsIncluded = plan?.tripsIncluded ?? null;
+  const tripsRemaining = up.tripsRemaining ?? null;
 
-    const liabilityEstimated =
-      tripsIncluded && tripsIncluded > 0 && tripsRemaining != null
-        ? (priceNum * (Number(tripsRemaining) / tripsIncluded)).toFixed(2)
-        : null;
+  const liabilityEstimated =
+    tripsIncluded && tripsIncluded > 0 && tripsRemaining != null
+      ? (priceNum * (Number(tripsRemaining) / tripsIncluded)).toFixed(2)
+      : null;
 
-    return {
-      userPrepaidPlanId: up.id,
-      userId: up.userId,
-      planId: up.planId,
-      planName: plan?.name ?? 'Prepaid Plan',
-      planDescription: plan?.description ?? null,
-      tripsIncluded,
-      discountPct: plan?.discountPct ?? null,
-      fixedDiscountAmount: plan?.fixedDiscountAmount ?? null,
-      expiresInDays: plan?.expiresInDays ?? null,
-      price: plan?.price ?? '0',
-      currency: plan?.currency ?? 'CUP',
-      planFeatures: (plan as any)?.planFeatures ?? null,
-      tripsRemaining,
-      expirationDate:
-        up.expirationDate instanceof Date
-          ? up.expirationDate.toISOString()
-          : up.expirationDate ?? null,
-      liabilityEstimated,
-    };
-  }
+  return {
+    userPrepaidPlanId: up.id,
+    userId: up.userId,
+    planId: up.planId,
+    planName: plan?.name ?? 'Prepaid Plan',
+    planDescription: plan?.description ?? null,
+    tripsIncluded,
+    discountPct: plan?.discountPct ?? null,
+    fixedDiscountAmount: plan?.fixedDiscountAmount ?? null,
+    expiresInDays: plan?.expiresInDays ?? null,
+    price: plan?.price ?? '0',
+    currency: plan?.currency ?? 'CUP',
+    planFeatures: (plan as any)?.planFeatures ?? null,
+    tripsRemaining,
+    expirationDate:
+      up.expirationDate instanceof Date
+        ? up.expirationDate.toISOString()
+        : (up.expirationDate ?? null),
+    liabilityEstimated,
+  };
+}

@@ -133,4 +133,3 @@ export class PrepaidPlanRepository extends BaseRepository<PrepaidPlan> {
     }
   }
 }
-

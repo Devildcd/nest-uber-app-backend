@@ -22,18 +22,27 @@ export class CreatePrepaidPlanDto {
   @IsString()
   description?: string;
 
-  @ApiPropertyOptional({ example: 10, description: 'Cantidad de viajes incluidos (NULL si no aplica)' })
+  @ApiPropertyOptional({
+    example: 10,
+    description: 'Cantidad de viajes incluidos (NULL si no aplica)',
+  })
   @IsOptional()
   @IsInt()
   @Min(0)
   tripsIncluded?: number;
 
-  @ApiPropertyOptional({ example: '10.00', description: 'Porcentaje de descuento (0-100), decimal con 2 dígitos' })
+  @ApiPropertyOptional({
+    example: '10.00',
+    description: 'Porcentaje de descuento (0-100), decimal con 2 dígitos',
+  })
   @IsOptional()
   @Matches(/^\d{1,3}(\.\d{1,2})?$/) // 0..100.00 (validación simple)
   discountPct?: string;
 
-  @ApiPropertyOptional({ example: '5.00', description: 'Descuento fijo en moneda' })
+  @ApiPropertyOptional({
+    example: '5.00',
+    description: 'Descuento fijo en moneda',
+  })
   @IsOptional()
   @Matches(/^\d{1,10}(\.\d{1,2})?$/)
   fixedDiscountAmount?: string;
@@ -59,9 +68,10 @@ export class CreatePrepaidPlanDto {
   @IsBoolean()
   isActive?: boolean = true;
 
-  @ApiPropertyOptional({ example: { tier: 'standard', perks: ['priority-support'] } })
+  @ApiPropertyOptional({
+    example: { tier: 'standard', perks: ['priority-support'] },
+  })
   @IsOptional()
   @IsObject()
   planFeatures?: Record<string, any>;
 }
-

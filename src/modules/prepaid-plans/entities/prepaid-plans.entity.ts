@@ -24,7 +24,7 @@ export class PrepaidPlan {
   @Column({ name: 'trips_included', type: 'int', nullable: true })
   tripsIncluded?: number | null;
 
-  //Porcentaje de descuento que ofrece el plan.  
+  //Porcentaje de descuento que ofrece el plan.
   @Column({
     name: 'discount_pct',
     type: 'decimal',
@@ -80,4 +80,3 @@ export class PrepaidPlan {
   })
   updatedAt!: Date;
 }
-
