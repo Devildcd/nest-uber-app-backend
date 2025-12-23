@@ -6,16 +6,24 @@ export class PurchasePrepaidPlanCashDto {
   @IsUUID()
   planId!: string;
 
-  @ApiProperty({ description: 'Usuario que compra (conductor o pasajero)', format: 'uuid' })
+  @ApiProperty({
+    description: 'Usuario que compra (conductor o pasajero)',
+    format: 'uuid',
+  })
   @IsUUID()
   buyerUserId!: string;
 
-  @ApiProperty({ description: 'Punto de recaudo donde se formaliza el depósito', format: 'uuid' })
+  @ApiProperty({
+    description: 'Punto de recaudo donde se formaliza el depósito',
+    format: 'uuid',
+  })
   @IsUUID()
   collectionPointId!: string;
 
-  @ApiProperty({ description: 'Usuario staff que recepciona en el punto de recaudo', format: 'uuid' })
+  @ApiProperty({
+    description: 'Usuario staff que recepciona en el punto de recaudo',
+    format: 'uuid',
+  })
   @IsUUID()
   collectedByUserId!: string;
-  
 }

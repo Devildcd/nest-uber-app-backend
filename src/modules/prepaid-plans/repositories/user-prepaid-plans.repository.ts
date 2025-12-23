@@ -3,12 +3,20 @@ import { DataSource, DeepPartial, EntityManager } from 'typeorm';
 import { Injectable } from '@nestjs/common';
 import { BaseRepository } from 'src/common/repositories/base.repository';
 import { handleRepositoryError } from 'src/common/utils/handle-repository-error';
-import { UserPrepaidPlan, UserPrepaidPlanStatus } from '../entities/user-prepaid-plans.entity';
+import {
+  UserPrepaidPlan,
+  UserPrepaidPlanStatus,
+} from '../entities/user-prepaid-plans.entity';
 
 @Injectable()
 export class UserPrepaidPlanRepository extends BaseRepository<UserPrepaidPlan> {
   constructor(dataSource: DataSource) {
-    super(UserPrepaidPlan, dataSource.createEntityManager(), 'UserPrepaidPlanRepository', 'UserPrepaidPlan');
+    super(
+      UserPrepaidPlan,
+      dataSource.createEntityManager(),
+      'UserPrepaidPlanRepository',
+      'UserPrepaidPlan',
+    );
   }
 
   async createAndSave(
@@ -23,12 +31,22 @@ export class UserPrepaidPlanRepository extends BaseRepository<UserPrepaidPlan> {
     }
   }
 
-  async findByInitialTransactionId(txId: string, manager?: EntityManager): Promise<UserPrepaidPlan | null> {
+  async findByInitialTransactionId(
+    txId: string,
+    manager?: EntityManager,
+  ): Promise<UserPrepaidPlan | null> {
     const repo = this.scoped(manager);
     try {
-      return await repo.findOne({ where: { initialPurchaseTransactionId: txId } as any });
+      return await repo.findOne({
+        where: { initialPurchaseTransactionId: txId } as any,
+      });
     } catch (err) {
-      handleRepositoryError(this.logger, err, 'findByInitialTransactionId', this.entityName);
+      handleRepositoryError(
+        this.logger,
+        err,
+        'findByInitialTransactionId',
+        this.entityName,
+      );
     }
   }
 
@@ -50,14 +68,21 @@ export class UserPrepaidPlanRepository extends BaseRepository<UserPrepaidPlan> {
         .where('up.user_id = :userId', { userId })
         .andWhere('up.status = :st', { st: UserPrepaidPlanStatus.ACTIVE })
         .andWhere('(up.expiration_date IS NULL OR up.expiration_date > NOW())')
-        .andWhere('(p.trips_included IS NULL OR COALESCE(up.trips_remaining, 0) > 0)')
+        .andWhere(
+          '(p.trips_included IS NULL OR COALESCE(up.trips_remaining, 0) > 0)',
+        )
         .orderBy('up.expiration_date', 'DESC', 'NULLS LAST')
         .addOrderBy('up.purchase_date', 'DESC')
         .limit(1);
 
       return await this.getOneSafe(qb, 'findActiveForUser');
     } catch (err) {
-      handleRepositoryError(this.logger, err, 'findActiveForUser', this.entityName);
+      handleRepositoryError(
+        this.logger,
+        err,
+        'findActiveForUser',
+        this.entityName,
+      );
       throw err;
     }
   }
@@ -82,13 +107,20 @@ export class UserPrepaidPlanRepository extends BaseRepository<UserPrepaidPlan> {
         .where('up.user_id = :userId', { userId })
         .andWhere('up.status = :st', { st: UserPrepaidPlanStatus.ACTIVE })
         .andWhere('(up.expiration_date IS NULL OR up.expiration_date > NOW())')
-        .andWhere('(p.trips_included IS NULL OR COALESCE(up.trips_remaining, 0) > 0)')
+        .andWhere(
+          '(p.trips_included IS NULL OR COALESCE(up.trips_remaining, 0) > 0)',
+        )
         .orderBy('up.expiration_date', 'DESC', 'NULLS LAST')
         .addOrderBy('up.purchase_date', 'DESC');
 
       return await qb.getMany();
     } catch (err) {
-      handleRepositoryError(this.logger, err, 'findAllActiveForUser', this.entityName);
+      handleRepositoryError(
+        this.logger,
+        err,
+        'findAllActiveForUser',
+        this.entityName,
+      );
       throw err;
     }
   }

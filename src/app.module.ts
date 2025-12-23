@@ -1,3 +1,5 @@
+import { PricePolicyModule } from './modules/settings/price-policies/price-policy.module';
+import { ZoneModule } from './modules/settings/zones/zone.module';
 import { WsCoreModule } from './core/ws/ws-core.module';
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
@@ -26,11 +28,14 @@ import { OutboxModule } from './infrastructure/outbox/outbox.module';
 import { QueueModule } from './infrastructure/queue/queue.module';
 import { WsModule } from './infrastructure/ws/ws.module';
 import { EventEmitterModule } from '@nestjs/event-emitter';
-import { CoreSettingsModule } from './modules/core-settings/core-settings.module';
 import { RealtimeModule } from './realtime/realtime.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { CoreSettingsModule } from './modules/core-settings/core-settings.module';
+import { CityModule } from './modules/settings/cities/city.module';
 @Module({
   imports: [
+    PricePolicyModule,
+    ZoneModule,
     WsCoreModule,
     MailModule,
     SmsModule,
@@ -65,6 +70,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     ScheduleModule.forRoot(),
     CoreSettingsModule,
     RealtimeModule,
+    CityModule,
   ],
   controllers: [AppController],
   providers: [AppService, DatabaseConfigService],

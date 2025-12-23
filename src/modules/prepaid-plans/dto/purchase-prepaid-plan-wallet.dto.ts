@@ -7,7 +7,10 @@ export class PurchasePrepaidPlanWalletDto {
   @IsUUID()
   planId!: string;
 
-  @ApiProperty({ description: 'Usuario comprador (debe tener wallet de driver)', format: 'uuid' })
+  @ApiProperty({
+    description: 'Usuario comprador (debe tener wallet de driver)',
+    format: 'uuid',
+  })
   @IsUUID()
   buyerUserId!: string;
 
@@ -15,5 +18,4 @@ export class PurchasePrepaidPlanWalletDto {
   @IsOptional()
   @IsString()
   note?: string;
- 
 }

@@ -31,7 +31,7 @@ export class UserPrepaidPlan {
   userId!: string;
 
   @ManyToOne(() => User, { nullable: false, onDelete: 'RESTRICT' })
-  @JoinColumn({ name: 'user_id', referencedColumnName: 'id' }) 
+  @JoinColumn({ name: 'user_id', referencedColumnName: 'id' })
   user?: User;
 
   @Column({ name: 'plan_id', type: 'uuid', nullable: false })
@@ -87,4 +87,3 @@ export class UserPrepaidPlan {
   })
   updatedAt!: Date;
 }
-

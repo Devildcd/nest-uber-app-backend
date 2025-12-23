@@ -21,7 +21,6 @@ import { EventEmitter2 } from 'eventemitter2';
 import { toGeoPoint } from 'src/common/utils/geo.utils';
 import { TripEventType } from '../interfaces/trip-event-types.enum';
 import { TripStop } from '../entities/trip-stop.entity';
-import { IdempotencyKeyRepository } from 'src/modules/core-settings/repositories/idempotency-key.repository';
 import { hashCreateTripPayload } from '../utils/dempotency.util';
 import { TripHelpersService } from './trip-helpers.service';
 import { TripAssignmentRepository } from '../repositories/trip-assignment.repository';
@@ -50,6 +49,7 @@ import { DriverAvailabilityService } from 'src/modules/drivers-availability/serv
 import { DriverAvailabilityRepository } from 'src/modules/drivers-availability/repositories/driver-availability.repository';
 import { EstimateTripDto } from '../dtos/trip/estimate-trip.dto';
 import { TripQuoteDto } from '../dtos/trip/trip-quote.dto';
+import { IdempotencyKeyRepository } from 'src/modules/core-settings/repositories/idempotency-key.repository';
 
 @Injectable()
 export class TripService {

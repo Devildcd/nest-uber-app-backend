@@ -4,7 +4,7 @@ import {
   EntityTarget,
   FindOneOptions,
   FindOptionsRelationByString,
-  ObjectLiteral, // 👈 importa esto
+  ObjectLiteral,
   Repository,
   SelectQueryBuilder,
 } from 'typeorm';
@@ -13,7 +13,6 @@ import { handleRepositoryError } from '../utils/handle-repository-error';
 export abstract class BaseRepository<
   T extends ObjectLiteral,
 > extends Repository<T> {
-  // 👈 restricción
   protected readonly logger: Logger;
   protected readonly entityName: string;
 
@@ -55,7 +54,7 @@ export abstract class BaseRepository<
       return await qb.getManyAndCount();
     } catch (err) {
       handleRepositoryError(this.logger, err, method, this.entityName);
-      throw err; // 👈 garantiza que el tipo no “caiga” en undefined si tu helper no lanza
+      throw err;
     }
   }
 
@@ -68,7 +67,7 @@ export abstract class BaseRepository<
       return await qb.getOne();
     } catch (err) {
       handleRepositoryError(this.logger, err, method, this.entityName);
-      throw err; // 👈 idem
+      throw err;
     }
   }
 

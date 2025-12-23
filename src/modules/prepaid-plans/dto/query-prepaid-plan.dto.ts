@@ -1,5 +1,11 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBooleanString, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsBooleanString,
+  IsInt,
+  IsOptional,
+  IsString,
+  Min,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class QueryPrepaidPlanDto {
@@ -27,7 +33,10 @@ export class QueryPrepaidPlanDto {
   @IsBooleanString()
   isActive?: string;
 
-  @ApiPropertyOptional({ example: 'pack 10', description: 'búsqueda por nombre' })
+  @ApiPropertyOptional({
+    example: 'pack 10',
+    description: 'búsqueda por nombre',
+  })
   @IsOptional()
   @IsString()
   search?: string;

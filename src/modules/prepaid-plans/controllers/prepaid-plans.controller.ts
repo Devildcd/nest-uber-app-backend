@@ -56,7 +56,6 @@ export class PrepaidPlansController {
     return this.service.create(dto);
   }
 
- 
   @Get()
   @ApiOperation({ summary: 'Listar planes (paginado/filtrado)' })
   @ApiOkResponse({
@@ -127,16 +126,23 @@ export class PrepaidPlansController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Eliminar un plan (hard delete)' })
   @ApiParam({ name: 'id', type: 'string', format: 'uuid' })
-  remove(@Param('id', new ParseUUIDPipe()) id: string): Promise<ApiResponseDto<null>> {
-    
+  remove(
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ): Promise<ApiResponseDto<null>> {
     return this.service.remove(id);
   }
-  
+
   @Public()
   @Post('purchase')
   @ApiOperation({ summary: 'Compra de plan prepago en efectivo' })
-  @ApiHeader({ name: 'Idempotency-Key', required: false, description: 'Clave para evitar compras duplicadas' })
-  @ApiCreatedResponse({ type: ApiResponseDto<PurchasePrepaidPlanResponseDto> as any })
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'Clave para evitar compras duplicadas',
+  })
+  @ApiCreatedResponse({
+    type: ApiResponseDto<PurchasePrepaidPlanResponseDto> as any,
+  })
   @ApiBadRequestResponse()
   purchaseCash(
     @Body() dto: PurchasePrepaidPlanCashDto,
@@ -144,16 +150,18 @@ export class PrepaidPlansController {
   ): Promise<ApiResponseDto<PurchasePrepaidPlanResponseDto>> {
     return this.service.purchaseCash(dto, idemKey);
   }
-  
+
   @Post('purchase-wallet')
-  @ApiOperation({ summary: 'Compra de plan prepago usando la wallet del driver' })
+  @ApiOperation({
+    summary: 'Compra de plan prepago usando la wallet del driver',
+  })
   @ApiHeader({
     name: 'Idempotency-Key',
     required: false,
     description: 'Clave para evitar compras duplicadas',
   })
   @ApiCreatedResponse({
-    type: (ApiResponseDto<PurchasePrepaidPlanResponseDto> as unknown) as any,
+    type: ApiResponseDto<PurchasePrepaidPlanResponseDto> as unknown as any,
   })
   @ApiBadRequestResponse()
   purchaseWithWallet(
@@ -168,7 +176,9 @@ export class PrepaidPlansController {
    * GET /api/prepaid-plans/users/:userId/active
    */
   @Get('users/:userId/active')
-  @ApiOperation({ summary: 'Obtener el plan activo del usuario (mejor candidato)' })
+  @ApiOperation({
+    summary: 'Obtener el plan activo del usuario (mejor candidato)',
+  })
   @ApiOkResponse({
     // Envelope estándar con data: UserActivePrepaidPlanResponseDto | null
     type: ApiResponseDto<UserActivePrepaidPlanResponseDto> as any,
@@ -195,4 +205,3 @@ export class PrepaidPlansController {
     return this.service.listActiveForUser(userId);
   }
 }
-

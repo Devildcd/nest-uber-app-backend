@@ -13,5 +13,3 @@ export interface IPrepaidPlan {
   createdAt: Date;
   updatedAt: Date;
 }
-
-

@@ -16,15 +16,31 @@ export class PurchasePrepaidPlanResponseDto {
   @ApiProperty({ description: 'Moneda (ISO 4217)' })
   currency!: string;
 
-  @ApiProperty({ description: 'Viajes restantes tras la compra', nullable: true, type: Number })
+  @ApiProperty({
+    description: 'Viajes restantes tras la compra',
+    nullable: true,
+    type: Number,
+  })
   tripsRemaining!: number | null;
 
-  @ApiPropertyOptional({ description: 'Fecha de expiración (ISO)', type: String, format: 'date-time', nullable: true })
+  @ApiPropertyOptional({
+    description: 'Fecha de expiración (ISO)',
+    type: String,
+    format: 'date-time',
+    nullable: true,
+  })
   expirationDate?: string | null;
 
-  @ApiProperty({ description: 'Transacción contable asociada (transactions.id)' })
+  @ApiProperty({
+    description: 'Transacción contable asociada (transactions.id)',
+  })
   transactionId!: string;
 
-  @ApiProperty({ description: 'Liability estimada (price * tripsRemaining/tripsIncluded). Null si el plan no es pack.', nullable: true, type: String })
+  @ApiProperty({
+    description:
+      'Liability estimada (price * tripsRemaining/tripsIncluded). Null si el plan no es pack.',
+    nullable: true,
+    type: String,
+  })
   liabilityEstimated?: string | null;
 }
