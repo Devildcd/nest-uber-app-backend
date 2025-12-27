@@ -177,6 +177,84 @@ export class PricePolicyRepository extends BaseRepository<PricePolicy> {
     }
   }
 
+  /**
+   * Devuelve candidatas ordenadas para evaluar conditions en app:
+   * - SCOPE: ZONE > CITY > GLOBAL
+   * - priority desc
+   * - effectiveFrom desc (más reciente)
+   */
+  async listCandidatesForContext(params: {
+    at: Date;
+    cityId: string | null;
+    zoneId: string | null;
+    onlyActive?: boolean;
+    manager?: EntityManager;
+    take?: number;
+  }): Promise<PricePolicy[]> {
+    const {
+      at,
+      cityId,
+      zoneId,
+      onlyActive = true,
+      manager,
+      take = 50,
+    } = params;
+
+    const repo = this.scoped(manager);
+    const qb = repo.createQueryBuilder('p');
+
+    if (onlyActive) qb.andWhere('p.active = true');
+
+    // effective window (soporta nulls como "sin límite")
+    qb.andWhere('(p.effectiveFrom IS NULL OR p.effectiveFrom <= :at)', { at });
+    qb.andWhere('(p.effectiveTo IS NULL OR p.effectiveTo >= :at)', { at });
+
+    // SCOPE match
+    const whereParts: string[] = [];
+    const scopedParams: Record<string, string> = {};
+
+    // GLOBAL siempre candidata
+    whereParts.push(
+      `(p.scopeType = :global AND p.cityId IS NULL AND p.zoneId IS NULL)`,
+    );
+    scopedParams.global = PricePolicyScopeType.GLOBAL;
+
+    if (cityId) {
+      whereParts.push(
+        `(p.scopeType = :city AND p.cityId = :cityId AND p.zoneId IS NULL)`,
+      );
+      scopedParams.city = PricePolicyScopeType.CITY;
+      scopedParams.cityId = cityId;
+    }
+
+    if (zoneId) {
+      whereParts.push(
+        `(p.scopeType = :zone AND p.zoneId = :zoneId AND p.cityId IS NULL)`,
+      );
+      scopedParams.zone = PricePolicyScopeType.ZONE;
+      scopedParams.zoneId = zoneId;
+    }
+
+    qb.andWhere(whereParts.join(' OR '), scopedParams);
+
+    // Orden: especificidad + priority + recencia
+    qb.orderBy(
+      `CASE 
+        WHEN p.scopeType = '${PricePolicyScopeType.ZONE}' THEN 3
+        WHEN p.scopeType = '${PricePolicyScopeType.CITY}' THEN 2
+        ELSE 1
+      END`,
+      'DESC',
+    )
+      .addOrderBy('p.priority', 'DESC')
+      .addOrderBy('p.effectiveFrom', 'DESC', 'NULLS LAST')
+      .addOrderBy('p.createdAt', 'DESC');
+
+    qb.take(take);
+
+    return qb.getMany();
+  }
+
   // -------- helpers ----------
   private applyFilters(
     qb: SelectQueryBuilder<PricePolicy>,

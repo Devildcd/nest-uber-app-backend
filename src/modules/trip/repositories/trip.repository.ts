@@ -10,10 +10,10 @@ import { Trip, TripStatus } from '../entities/trip.entity';
 import { BaseRepository } from 'src/common/repositories/base.repository';
 import { handleRepositoryError } from 'src/common/utils/handle-repository-error';
 import { TripsQueryDto } from '../dtos/trip/trips-query.dto';
-import {
-  FareBreakdown,
-  TripListItemProjection,
-} from '../interfaces/trip.interfaces';
+import { FareBreakdown } from 'src/common/interfaces/fare-breakdown.interface';
+import { TripListItemProjection } from '../interfaces/trip.interfaces';
+import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
+import { VehicleType } from 'src/modules/vehicle-types/entities/vehicle-types.entity';
 
 export interface PaginationDto {
   page?: number;
@@ -223,9 +223,9 @@ export class TripRepository extends BaseRepository<Trip> {
   ): Promise<Trip> {
     const repo = this.scoped(manager);
     try {
-      await repo.update({ id } as any, patch);
+      await repo.update({ id }, patch as QueryDeepPartialEntity<Trip>);
       const updated = await repo.findOne({
-        where: { id } as any,
+        where: { id },
         relations: { passenger: true, driver: true, vehicle: true },
       });
       return updated!;
@@ -272,19 +272,21 @@ export class TripRepository extends BaseRepository<Trip> {
     estimate: {
       currency: string;
       surgeMultiplier: number;
-      breakdown: any;
+      breakdown: FareBreakdown;
       distanceKmEst?: number;
       durationMinEst?: number;
-      estimatedTotal?: number | null; // estimado en fase de solicitud
+      estimatedTotal?: number | null;
+
+      // opcional si lo estás usando
+      estimateVehicleTypeId?: string | null;
     },
     manager: EntityManager,
   ): Promise<void> {
     const repo = this.scoped(manager);
 
-    const patch: any = {
+    const patch: Record<string, unknown> = {
       fareFinalCurrency: estimate.currency,
       fareSurgeMultiplier: estimate.surgeMultiplier,
-      fareBreakdown: estimate.breakdown,
     };
 
     if (estimate.distanceKmEst !== undefined) {
@@ -303,9 +305,16 @@ export class TripRepository extends BaseRepository<Trip> {
 
     await repo
       .createQueryBuilder()
-      .update()
-      .set(patch)
+      .update(Trip)
+      .set({
+        ...patch,
+        // ✅ IMPORTANT: JSONB por parámetro para evitar el typing issue
+        fareBreakdown: () => 'CAST(:breakdown AS jsonb)',
+      })
       .where('id = :id', { id })
+      .setParameters({
+        breakdown: JSON.stringify(estimate.breakdown),
+      })
       .execute();
   }
 

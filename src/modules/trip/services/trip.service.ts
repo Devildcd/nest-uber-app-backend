@@ -253,8 +253,9 @@ export class TripService {
             vehicleCategoryId: dto.vehicleCategoryId,
             serviceClassId: dto.serviceClassId,
             pickup: toGeoPoint(dto.pickupPoint.lat, dto.pickupPoint.lng),
-            stops: items.map((it) => it.point as any), // GeoJSON Points
-            currency: 'CUP', // o tu default/currency de ciudad
+            stops: items.map((it) => it.point as any),
+            currency: 'CUP',
+            at: requestedAt, // ✅ importante para policy (condiciones por hora/día)
             manager,
           });
 

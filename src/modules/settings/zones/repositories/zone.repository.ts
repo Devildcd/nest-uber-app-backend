@@ -189,13 +189,13 @@ export class ZoneRepository extends BaseRepository<Zone> {
     opts: { onlyActive?: boolean } = { onlyActive: true },
   ): Promise<Zone | null> {
     const qb = this.qb('z')
-      .where('z.city_id = :cid', { cid: cityId })
+      .where('z.cityId = :cid', { cid: cityId })
       .andWhere(
         `ST_Covers(z.geom, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326))`,
         { lng: point.lng, lat: point.lat },
       )
       .orderBy('z.priority', 'DESC')
-      .addOrderBy('z.created_at', 'DESC')
+      .addOrderBy('z.createdAt', 'DESC')
       .limit(1);
 
     if (opts.onlyActive) qb.andWhere('z.active = true');
@@ -205,7 +205,7 @@ export class ZoneRepository extends BaseRepository<Zone> {
 
   // --------- helpers ----------
   private applyFilters(qb: SelectQueryBuilder<Zone>, f: ZonesQueryDto): void {
-    if (f.cityId) qb.andWhere('z.city_id = :cid', { cid: f.cityId });
+    if (f.cityId) qb.andWhere('z.cityId = :cid', { cid: f.cityId });
 
     if (f.q) qb.andWhere('z.name ILIKE :q', { q: `%${f.q}%` });
     if (f.name) qb.andWhere('z.name ILIKE :name', { name: `%${f.name}%` });

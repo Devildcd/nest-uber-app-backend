@@ -8,6 +8,7 @@ import { Injectable } from '@nestjs/common';
 import { BaseRepository } from 'src/common/repositories/base.repository';
 import { handleRepositoryError } from 'src/common/utils/handle-repository-error';
 import { TripStop } from '../entities/trip-stop.entity';
+import { QueryDeepPartialEntity } from 'typeorm/query-builder/QueryPartialEntity';
 
 @Injectable()
 export class TripStopsRepository extends BaseRepository<TripStop> {
@@ -74,8 +75,8 @@ export class TripStopsRepository extends BaseRepository<TripStop> {
   ): Promise<TripStop> {
     const repo = this.scoped(manager);
     try {
-      await repo.update({ id } as any, patch);
-      const updated = await repo.findOne({ where: { id } as any });
+      await repo.update({ id }, patch as QueryDeepPartialEntity<TripStop>);
+      const updated = await repo.findOne({ where: { id } });
       return updated!;
     } catch (err) {
       handleRepositoryError(this.logger, err, 'updatePartial', this.entityName);
