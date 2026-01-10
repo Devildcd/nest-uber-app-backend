@@ -198,7 +198,10 @@ export class PricingEngineService {
 
     // 2) VehicleType (idealmente snapshot del estimate)
     let vt: VehicleType | null = null;
-    const vtId = trip.estimateVehicleType?.id ?? null;
+    const vtId =
+      trip.estimateVehicleType?.id ??
+      trip.fareBreakdown?.vehicle_type_id ??
+      null;
 
     if (vtId) {
       vt = await m.getRepository(VehicleType).findOne({
@@ -300,7 +303,8 @@ export class PricingEngineService {
       duration_min_est: durationMin,
 
       subtotal: r2(computed.subtotal),
-      total: r2(computed.totalBase),
+      total: r2(computed.totalNoExtras),
+      total_with_extras: r2(computed.total),
       surge_multiplier: surge,
 
       ...(opts?.waitingTimeMinutes != null
@@ -369,42 +373,50 @@ export class PricingEngineService {
     );
   }
 
-  private buildRateCard(
-    policy: PricePolicy,
-    fallbackTimezone: string,
-  ): RateCard {
-    const tz =
-      (policy.timezone && policy.timezone.trim()) || fallbackTimezone || 'UTC';
+ private factorFromPolicy(v: unknown, def = 1): number {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return def;
 
-    const price: PricePolicyPrice = policy.price ?? {};
+  // Si viene 35, 13, 70 => lo interpretamos como porcentaje: 35% => 1.35
+  // Umbral 5 es práctico para distinguir 1.1 vs 10/35/70
+  if (n >= 5) return r4(1 + n / 100);
 
-    // ✅ FACTORES (default 1)
-    const baseFactor = Number(price.base_fare ?? 1);
-    const perKmFactor = Number(price.per_km ?? 1);
-    const perMinFactor = Number(price.per_minute ?? 1);
-    const minFareFactor = Number(price.minimum_fare ?? 1);
+  // Si ya viene en formato 1.15, 1.2, etc.
+  return r4(n);
+}
 
-    // ✅ FIJOS (default 0)
-    const bookingFee = Number(price.booking_fee ?? 0);
-    const nightSurcharge = Number(price.night_surcharge ?? 0);
+private buildRateCard(policy: PricePolicy, fallbackTimezone: string): RateCard {
+  const tz =
+    (policy.timezone && policy.timezone.trim()) || fallbackTimezone || 'UTC';
 
-    const cap = price.cap != null ? Number(price.cap) : null;
+  const price: PricePolicyPrice = policy.price ?? {};
 
-    return {
-      policyId: policy.id,
-      scopeType: policy.scopeType,
-      timezoneUsed: tz,
+  // FACTORES (se normalizan)
+  const baseFactor = this.factorFromPolicy(price.base_fare, 1);
+  const perKmFactor = this.factorFromPolicy(price.per_km, 1);
+  const perMinFactor = this.factorFromPolicy(price.per_minute, 1);
+  const minFareFactor = this.factorFromPolicy(price.minimum_fare, 1);
 
-      base_fare: r4(baseFactor),
-      per_km: r4(perKmFactor),
-      per_minute: r4(perMinFactor),
-      minimum_fare: r4(minFareFactor),
+  // FIJOS (montos)
+  const bookingFee = Number(price.booking_fee ?? 0);
+  const nightSurcharge = Number(price.night_surcharge ?? 0);
+  const cap = price.cap != null ? Number(price.cap) : null;
 
-      booking_fee: r2(bookingFee),
-      night_surcharge: r2(nightSurcharge),
-      cap: cap != null ? r2(cap) : null,
-    };
-  }
+  return {
+    policyId: policy.id,
+    scopeType: policy.scopeType,
+    timezoneUsed: tz,
+
+    base_fare: r4(baseFactor),
+    per_km: r4(perKmFactor),
+    per_minute: r4(perMinFactor),
+    minimum_fare: r4(minFareFactor),
+
+    booking_fee: r2(bookingFee),
+    night_surcharge: r2(nightSurcharge),
+    cap: cap != null ? r2(cap) : null,
+  };
+}
 
   // ----------------------- Conditions evaluation -----------------------
 
@@ -539,80 +551,88 @@ export class PricingEngineService {
   // ----------------------- Compute math -----------------------
 
   private computeFare(params: {
-    vehicleRates: {
-      baseFare: number;
-      perKm: number;
-      perMinute: number;
-      minFare: number;
-    };
-    rateCard: RateCard;
-    multipliers: AppliedMultipliers;
-    distanceKm: number;
-    durationMin: number;
-    surgeMultiplier: number;
-    extrasTotal: Money;
-  }): {
-    base: Money;
-    perKm: Money;
-    perMin: Money;
-    minFare: Money;
-    bookingFee: Money;
-    subtotal: Money;
-    totalBase: Money;
-    total: Money;
-  } {
-    const {
-      vehicleRates,
-      rateCard,
-      multipliers,
-      distanceKm,
-      durationMin,
-      surgeMultiplier,
-      extrasTotal,
-    } = params;
+  vehicleRates: {
+    baseFare: number;
+    perKm: number;
+    perMinute: number;
+    minFare: number;
+  };
+  rateCard: RateCard;
+  multipliers: AppliedMultipliers;
+  distanceKm: number;
+  durationMin: number;
+  surgeMultiplier: number;
+  extrasTotal: Money;
+}): {
+  base: Money;
+  perKm: Money;
+  perMin: Money;
+  minFare: Money;
+  bookingFee: Money;
+  subtotal: Money;
+  totalBase: Money;        // antes de surge/cap
+  totalNoExtras: Money;    // ya con surge+cap, pero sin extras
+  total: Money;            // final con extras
+} {
+  const {
+    vehicleRates,
+    rateCard,
+    multipliers,
+    distanceKm,
+    durationMin,
+    surgeMultiplier,
+    extrasTotal,
+  } = params;
 
-    // 1) VehicleType rates * serviceClass multipliers
-    const base0 = Number(vehicleRates.baseFare) * multipliers.base;
-    const perKm0 = Number(vehicleRates.perKm) * multipliers.per_km;
-    const perMin0 = Number(vehicleRates.perMinute) * multipliers.per_min;
-    const minFare0 = Number(vehicleRates.minFare) * multipliers.min_fare;
+  // 1) VehicleType rates * serviceClass multipliers
+  const base0 = Number(vehicleRates.baseFare) * Number(multipliers.base ?? 1);
+  const perKm0 = Number(vehicleRates.perKm) * Number(multipliers.per_km ?? 1);
+  const perMin0 =
+    Number(vehicleRates.perMinute) * Number(multipliers.per_min ?? 1);
+  const minFare0 =
+    Number(vehicleRates.minFare) * Number(multipliers.min_fare ?? 1);
 
-    // 2) Policy factors
-    const base = base0 * Number(rateCard.base_fare);
-    const perKm = perKm0 * Number(rateCard.per_km);
-    const perMin = perMin0 * Number(rateCard.per_minute);
-    const minFare = minFare0 * Number(rateCard.minimum_fare);
+  // 2) Policy factors (ya normalizados a 1.xx)
+  const base = base0 * Number(rateCard.base_fare ?? 1);
+  const perKm = perKm0 * Number(rateCard.per_km ?? 1);
+  const perMin = perMin0 * Number(rateCard.per_minute ?? 1);
+  const minFare = minFare0 * Number(rateCard.minimum_fare ?? 1);
 
-    // 3) Fixed fees from policy
-    const bookingFee = Number(rateCard.booking_fee);
-    const nightSurcharge = Number(rateCard.night_surcharge);
+  // 3) Fixed fees from policy (son montos)
+  const bookingFee = Number(rateCard.booking_fee ?? 0);
+  const nightSurcharge = Number(rateCard.night_surcharge ?? 0);
 
-    const subtotal =
-      base +
-      perKm * distanceKm +
-      perMin * durationMin +
-      bookingFee +
-      nightSurcharge;
+  const subtotal =
+    base +
+    perKm * distanceKm +
+    perMin * durationMin +
+    bookingFee +
+    nightSurcharge;
 
-    const totalBase = Math.max(subtotal, minFare);
-    const surged = totalBase * Number(surgeMultiplier ?? 1);
+  // totalBase = pre-surge, pre-cap
+  const totalBase = Math.max(subtotal, minFare);
 
-    const capped =
-      rateCard.cap != null ? Math.min(surged, Number(rateCard.cap)) : surged;
+  const surged = totalBase * Number(surgeMultiplier ?? 1);
 
-    const total = capped + Number(extrasTotal ?? 0);
+  // cap se aplica ya con surge
+  const capped =
+    rateCard.cap != null ? Math.min(surged, Number(rateCard.cap)) : surged;
 
-    return {
-      base: r2(base),
-      perKm: r4(perKm),
-      perMin: r4(perMin),
-      minFare: r2(minFare),
-      bookingFee: r2(bookingFee),
-      subtotal: r2(subtotal),
-      totalBase: r2(totalBase),
-      total: r2(total),
-    };
-  }
+  const totalNoExtras = capped;
+  const total = totalNoExtras + Number(extrasTotal ?? 0);
+
+  return {
+    base: r2(base),
+    perKm: r4(perKm),
+    perMin: r4(perMin),
+    minFare: r2(minFare),
+    bookingFee: r2(bookingFee),
+    subtotal: r2(subtotal),
+    totalBase: r2(totalBase),
+    totalNoExtras: r2(totalNoExtras),
+    total: r2(total),
+  };
+}
 
   // ----------------------- Context resolution -----------------------
 
@@ -692,6 +712,15 @@ export class PricingEngineService {
     // validación mínima
     if (!rc.policyId || !rc.scopeType || !rc.timezoneUsed) return null;
     return rc;
+  }
+
+  public estimateRouteMetrics(
+    points: Point[],
+    speedKmph = 30,
+  ): { distanceKm: number; durationMin: number } {
+    const distanceKm = r3(this.chainHaversineKm(points));
+    const durationMin = r2((distanceKm / speedKmph) * 60);
+    return { distanceKm, durationMin };
   }
 
   // ----------------------- Geo helpers -----------------------

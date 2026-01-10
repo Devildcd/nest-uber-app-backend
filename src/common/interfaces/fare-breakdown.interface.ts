@@ -32,6 +32,7 @@ export interface FareBreakdown {
   cost_per_km: number;
   cost_per_minute: number;
   min_fare: number;
+  total_with_extras?: number;
 
   applied_multipliers: {
     base: number;

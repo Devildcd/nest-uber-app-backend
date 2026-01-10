@@ -50,6 +50,7 @@ import { DriverAvailabilityRepository } from 'src/modules/drivers-availability/r
 import { EstimateTripDto } from '../dtos/trip/estimate-trip.dto';
 import { TripQuoteDto } from '../dtos/trip/trip-quote.dto';
 import { IdempotencyKeyRepository } from 'src/modules/core-settings/repositories/idempotency-key.repository';
+import { PricingEngineService } from 'src/modules/settings/price-policies/services/pricing-engine.service';
 
 @Injectable()
 export class TripService {
@@ -67,6 +68,7 @@ export class TripService {
     private readonly orderService: OrdersService,
     private readonly availabilityService: DriverAvailabilityService,
     private readonly availabilityRepository: DriverAvailabilityRepository,
+    private readonly pricing: PricingEngineService,
   ) {}
   /**
    * Lista paginada de trips (con relaciones básicas), devolviendo envelope estándar.
@@ -249,13 +251,13 @@ export class TripService {
           await this.tripStopsRepo.createManyForTrip(trip.id, items, manager);
 
           // Calcular estimado (pickup → stops)
-          const est = await this.tripHelpers.estimateForRequest({
+          const est = await this.pricing.estimateForRequest({
             vehicleCategoryId: dto.vehicleCategoryId,
             serviceClassId: dto.serviceClassId,
             pickup: toGeoPoint(dto.pickupPoint.lat, dto.pickupPoint.lng),
             stops: items.map((it) => it.point as any),
             currency: 'CUP',
-            at: requestedAt, // ✅ importante para policy (condiciones por hora/día)
+            at: requestedAt, // ✅ importante para políticas con condiciones
             manager,
           });
 
@@ -1183,8 +1185,8 @@ export class TripService {
         if (!t) throw new NotFoundException('Trip not found (after lock)');
 
         // 3) Distancia/tiempo reales o fallback
-        let dKm = dto.actualDistanceKm;
-        let dMin = dto.actualDurationMin;
+        let dKm = dto.actualDistanceKm ?? t.fareDistanceKm ?? null;
+        let dMin = dto.actualDurationMin ?? t.fareDurationMin ?? null;
 
         if (dKm == null || dMin == null) {
           const stops = await this.tripStopsRepo.findByTripOrdered(
@@ -1195,13 +1197,14 @@ export class TripService {
             t.pickupPoint as any,
             ...stops.map((s) => s.point as any),
           ];
-          const distKm = this.tripHelpers['chainHaversineKm'](points as any);
-          dKm = dKm ?? distKm;
-          dMin = dMin ?? (distKm / 30) * 60; // heurística de duración
+
+          const metrics = this.pricing.estimateRouteMetrics(points as any); // ✅ limpio
+          dKm = dKm ?? metrics.distanceKm;
+          dMin = dMin ?? metrics.durationMin;
         }
 
         // 4) Pricing final (incluye extras / espera)
-        const final = await this.tripHelpers.computeFinalForCompletion(
+        const final = await this.pricing.computeFinalForCompletion(
           t,
           Number(dKm),
           Number(dMin),
