@@ -14,7 +14,6 @@ import {
 
 import { User } from 'src/modules/user/entities/user.entity';
 import { Vehicle } from 'src/modules/vehicles/entities/vehicle.entity';
-import { FareBreakdown } from '../interfaces/trip.interfaces';
 import { Order } from 'src/modules/orders/entities/order.entity';
 import { DecimalTransformer } from 'src/common/validators/decimal.transformer';
 import { TripStop } from 'src/modules/trip/entities/trip-stop.entity';
@@ -23,6 +22,7 @@ import { TripAssignment } from './trip-assignment.entity';
 import { VehicleCategory } from 'src/modules/vehicle-category/entities/vehicle-category.entity';
 import { VehicleServiceClass } from 'src/modules/vehicle-service-classes/entities/vehicle-service-classes.entity';
 import { VehicleType } from 'src/modules/vehicle-types/entities/vehicle-types.entity';
+import { FareBreakdown } from 'src/common/interfaces/fare-breakdown.interface';
 
 // ---------- ENUMS ----------
 export enum TripStatus {

@@ -1,4 +1,4 @@
-import { FareBreakdown } from '../../interfaces/trip.interfaces';
+import { FareBreakdown } from 'src/common/interfaces/fare-breakdown.interface';
 
 export class TripQuoteDto {
   currency: string;

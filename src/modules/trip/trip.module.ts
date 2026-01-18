@@ -21,6 +21,7 @@ import { TripSnapshotRepository } from './repositories/trip-snapshot.repository'
 import { OrdersModule } from '../orders/orders.module';
 import { AssignmentExpiryScheduler } from './services/assignment-expiry.scheduler';
 import { CoreSettingsModule } from '../core-settings/core-settings.module';
+import { PricePolicyModule } from '../settings/price-policies/price-policy.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { CoreSettingsModule } from '../core-settings/core-settings.module';
     CoreSettingsModule,
     DriversAvailabilityModule,
     OrdersModule,
+    PricePolicyModule,
   ],
   controllers: [TripController],
   providers: [

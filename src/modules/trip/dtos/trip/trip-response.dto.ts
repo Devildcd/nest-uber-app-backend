@@ -1,5 +1,5 @@
+import { FareBreakdown } from 'src/common/interfaces/fare-breakdown.interface';
 import { PaymentMode, TripStatus } from '../../entities/trip.entity';
-import { FareBreakdown } from '../../interfaces/trip.interfaces';
 
 export class TripStopDto {
   seq!: number;

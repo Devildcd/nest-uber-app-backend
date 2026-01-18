@@ -177,6 +177,31 @@ export class CityRepository extends BaseRepository<City> {
     return this.getOneSafe(qb, 'findByPoint');
   }
 
+  /**
+   * Intenta resolver la ciudad por punto (usa City.geom si está definido).
+   * - ST_Covers para incluir bordes
+   * - Solo ciudades activas
+   */
+  async findBestByPoint(
+    point: { lat: number; lng: number },
+    manager?: EntityManager,
+  ): Promise<City | null> {
+    const repo = this.scoped(manager);
+
+    const qb = repo
+      .createQueryBuilder('c')
+      .where('c.active = true')
+      .andWhere('c.geom IS NOT NULL')
+      .andWhere(
+        `ST_Covers(c.geom, ST_SetSRID(ST_MakePoint(:lng, :lat), 4326))`,
+        { lng: point.lng, lat: point.lat },
+      )
+      .orderBy('c.createdAt', 'DESC')
+      .limit(1);
+
+    return this.getOneSafe(qb, 'findBestByPoint');
+  }
+
   // --------- helpers privados ----------
   private applyFilters(qb: SelectQueryBuilder<City>, f: CitiesQueryDto): void {
     if (f.q) qb.andWhere('c.name ILIKE :q', { q: `%${f.q}%` });
